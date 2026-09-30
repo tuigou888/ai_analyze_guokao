@@ -1,0 +1,29 @@
+{
+  "checks": [
+    "anonymous root redirects to user login",
+    "registration/login and real question bank",
+    "draft survives browser reload",
+    "50 consecutive real questions graded on server",
+    "real Shaanxi A–H question",
+    "judge correct/incorrect labels and wrong answer",
+    "wrongbook auto-insert and correct redo resolves",
+    "restored LaTeX renders as KaTeX",
+    "question images delivered from original dataset",
+    "concept map, detail and sample questions",
+    "paper session builds original question order",
+    "history and resume links",
+    "Chinese keyword search",
+    "375px layouts without horizontal page overflow",
+    "logout saves pending draft before revoking session",
+    "user account cannot enter admin",
+    "independent admin login and 375px settings layout"
+  ],
+  "console_errors": [],
+  "screenshots": [
+    "questions-desktop.png",
+    "practice-desktop.png",
+    "questions-mobile.png",
+    "practice-mobile.png",
+    "login-mobile.png"
+  ]
+}

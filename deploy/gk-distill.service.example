@@ -1,0 +1,28 @@
+# ONLY install/start this service AFTER website deployment has passed acceptance.
+# Replace run ID and model before first start; preserve them on resume.
+[Unit]
+Description=GK manual distillation after deployment acceptance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gk
+Group=gk
+WorkingDirectory=/opt/gk
+ExecStart=/opt/gk/gk distill run --db /opt/gk/var/db/gk.sqlite --secret-key-file /opt/gk/var/secret.key --taxonomy /opt/gk/taxonomy/v1/taxonomy.yaml --run-dir /opt/gk/var/runs --model sensenova-6.8-flash-lite --concurrency 1 --run full-gk-DEPLOYDATE --wait-available 30m
+Restart=no
+Environment=GOMAXPROCS=1
+Environment=GOMEMLIMIT=640MiB
+MemoryHigh=768M
+MemoryMax=900M
+CPUQuota=50%
+Nice=10
+IOWeight=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/gk/var
+# There is intentionally no [Install] section; this is a manually started task.

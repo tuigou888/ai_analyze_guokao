@@ -1,0 +1,18 @@
+[Unit]
+Description=GK consistent database and key backup
+
+[Service]
+Type=oneshot
+User=gk
+Group=gk
+WorkingDirectory=/opt/gk
+ExecStart=/bin/sh /opt/gk/deploy/backup.sh
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/gk/var
+MemoryMax=512M
+CPUQuota=50%
+Nice=10

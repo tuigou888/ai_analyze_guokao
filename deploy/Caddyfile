@@ -1,0 +1,11 @@
+# Replace this domain and configure its DNS before starting Caddy.
+practice.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080
+    log {
+        output file /var/log/caddy/gk-access.log {
+            roll_size 10MiB
+            roll_keep 3
+        }
+    }
+}

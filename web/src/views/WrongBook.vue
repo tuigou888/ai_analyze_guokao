@@ -1,0 +1,13 @@
+<script setup>
+import { onMounted,ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { api } from '../api'
+import Pagination from '../components/Pagination.vue'
+import QuestionRows from '../components/QuestionRows.vue'
+const router=useRouter(),data=ref({items:[],total:0}),page=ref(1),status=ref('pending'),busy=ref(false),starting=ref(false),error=ref('')
+async function load(p=1){page.value=p;busy.value=true;error.value='';try{data.value=await api.wrongbook({page:p,size:20,status:status.value})}catch(e){error.value=e.message}finally{busy.value=false}}
+async function start(id){starting.value=true;try{const s=await api.createSession('wrongbook',id?{question_ids:[id]}:{limit:20});await router.push(`/practice?session=${s.session_id}`)}catch(e){error.value=e.message}finally{starting.value=false}}
+async function action(id,act){try{await api.wrongAction(id,act);await load(page.value)}catch(e){error.value=e.message}}
+onMounted(()=>load())
+</script>
+<template><div class="page-heading"><div><p class="eyebrow">错题本 / WRONG</p><h1>把答错的那一步，再走一遍</h1><p class="muted">判错后自动收录，重新答对后标记为已订正。主动收藏的题在收藏区。</p></div><button class="primary" :disabled="starting||!data.total" @click="start()">重练待订正题</button></div><div class="tabs" role="group" aria-label="错题状态"><button v-for="[v,n] in [['pending','待订正'],['resolved','已订正'],['all','全部错题记录']]" :key="v" :aria-pressed="status===v" :class="{active:status===v}" @click="status=v;load()">{{ n }}</button></div><p v-if="error" class="notice err" role="alert">{{ error }}</p><section class="panel"><div class="panel-heading"><h2>{{ status==='resolved'?'已订正错题':status==='all'?'全部错题记录':'待订正错题' }} <span class="count">{{ data.total }}</span></h2></div><p v-if="busy" class="empty" role="status">正在加载错题…</p><QuestionRows v-else-if="data.items.length" :items="data.items" :busy="starting" @practice="start"><template #meta="{question:q}"><span>答错 {{ q.wrong_count }} 次 · {{ q.resolved?'已订正':'待订正' }}</span></template><template #actions="{question:q}"><button class="text-button" @click="action(q.id,'favorite')">收藏</button><button class="text-button" @click="action(q.id,q.resolved?'unresolve':'resolve')">{{ q.resolved?'恢复待订正':'标记已订正' }}</button><button class="text-button" @click="action(q.id,'delete')">移除</button></template></QuestionRows><div v-else class="empty"><h3>{{ status==='pending'?'暂无待订正错题':'暂无错题记录' }}</h3><p>完成练习后答错的题会自动收录到错题本。想留存好题请用「收藏」。</p><RouterLink to="/questions">去题库练习</RouterLink></div><Pagination :page="page" :size="20" :total="data.total" :busy="busy" @change="load" /></section></template>

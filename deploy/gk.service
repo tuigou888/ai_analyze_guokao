@@ -1,0 +1,28 @@
+[Unit]
+Description=GK question bank web service
+After=network.target
+
+[Service]
+Type=simple
+User=gk
+Group=gk
+WorkingDirectory=/opt/gk
+ExecStart=/opt/gk/gk serve --db /opt/gk/var/db/gk.sqlite --data /opt/gk/data --secret-key-file /opt/gk/var/secret.key --addr 127.0.0.1:8080
+Restart=on-failure
+RestartSec=5
+Environment=GOMAXPROCS=2
+Environment=GOMEMLIMIT=768MiB
+MemoryHigh=900M
+MemoryMax=1200M
+CPUQuota=150%
+TasksMax=128
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/gk/var
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
