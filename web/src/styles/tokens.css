@@ -1,28 +1,118 @@
-/* Semantic design tokens */
+/* Shared visual standards: semantic palette, type scale, spacing and shape. */
 :root {
+  /* Core surfaces and text */
   --color-page: #f2f5f9;
   --color-surface: #fff;
   --color-surface-subtle: #f4f7fb;
+  --color-surface-raised: #f5f8fc;
+  --color-surface-data: #f6f8fc;
+  --color-surface-glow: #f5f9ff;
+  --color-surface-brand: #e6eef9;
   --color-border: #dce4ef;
+  --color-border-subtle: #ccd9e9;
+  --color-border-hover: #9cb4d2;
   --color-text: #20324b;
   --color-text-muted: #58697f;
+  --color-text-subtle: #60728b;
+  --color-placeholder: #718098;
+
+  /* Brand and interaction */
   --color-primary: #215eac;
   --color-primary-hover: #174e94;
   --color-primary-soft: #e7f0fd;
+  --color-primary-muted: #4774aa;
+  --color-primary-mid: #4279ba;
+  --color-primary-border: #aec8ec;
+  --color-primary-focus: #327acb;
+  --color-primary-selected: #eff5fe;
+  --color-border-hover-soft: #84a9d6;
+  --color-nav-surface: #eef3fa;
+  --color-nav-hover: #e3ebf7;
+  --color-nav-active: #dae7fa;
+  --color-nav-active-text: #184f95;
+  --color-nav-border: #b9cbe3;
+  --color-user-surface: #e1eafa;
+  --color-user-text: #225ea6;
+  --color-on-primary: var(--color-surface);
+
+  /* Status colors */
   --color-success: #167052;
-  --color-warning: #8b590d;
-  --color-danger: #b73543;
-  --color-info: #395578;
+  --color-success-strong: #216a53;
   --color-success-surface: #eaf7f0;
+  --color-success-muted: #e5f2ee;
+  --color-success-soft: #edf8f1;
   --color-success-border: #c1dfd0;
+  --color-success-border-soft: #c4dfd3;
+  --color-success-border-strong: #7db89f;
+  --color-warning: #8b590d;
   --color-warning-surface: #fff7e6;
   --color-warning-border: #eed9ad;
+  --color-danger: #b73543;
   --color-danger-surface: #fff0f2;
+  --color-danger-soft: #fff1f3;
   --color-danger-border: #ebc1c8;
+  --color-danger-border-strong: #d598a2;
+  --color-danger-border-muted: #d89ba6;
+  --color-option-selected-border: #3e7cc8;
+  --color-info: #395578;
   --color-info-surface: #eaf1fb;
   --color-info-border: #cbdcf0;
+
+  /* Content-specific surfaces */
+  --color-row-hover: #fcfdff;
+  --color-concept-hover: #fbfdff;
+  --color-score-surface: #e5f2ed;
+  --color-score-border: #c6dfd4;
+  --color-study-border: #d0dded;
+  --color-overlay-light: rgba(255,255,255,.4);
+  --color-topbar-surface: rgba(255,255,255,.75);
+
+  /* Avatar palettes */
+  --color-avatar-default-surface: #e8eff9;
+  --color-avatar-default-text: var(--color-primary);
+  --color-avatar-default-border: #cfddf0;
+  --color-avatar-1-surface: var(--color-success-muted);
+  --color-avatar-1-text: #14664c;
+  --color-avatar-1-border: #bbdbcf;
+  --color-avatar-2-surface: #fff0d8;
+  --color-avatar-2-text: #82510a;
+  --color-avatar-2-border: #e8cf9e;
+  --color-avatar-3-surface: #efe9f6;
+  --color-avatar-3-text: #664087;
+  --color-avatar-3-border: #d6c4e8;
+  --color-avatar-4-surface: #e1f1f5;
+  --color-avatar-4-text: #206574;
+  --color-avatar-4-border: #b9dae2;
+  --color-avatar-5-surface: #f7e8e7;
+  --color-avatar-5-text: #944d48;
+  --color-avatar-5-border: #e8c3c0;
+  --color-avatar-6-surface: #e9eddf;
+  --color-avatar-6-text: #52662d;
+  --color-avatar-6-border: #ced8b5;
+  --color-avatar-7-surface: #e8ebef;
+  --color-avatar-7-text: #485973;
+  --color-avatar-7-border: #c7cfda;
+
+  /* Charts and learning states */
+  --color-chart-grid: #e7edf5;
+  --color-chart-track: #e5ecf5;
+  --color-chart-ring-track: #e8eef6;
+  --color-chart-bar: #80a7d9;
+  --color-chart-bar-strong: #6c94ca;
+  --color-chart-progress: #3574bd;
+  --color-chart-hover: #e8eef8;
+  --color-heatmap-0-surface: #edf1f6;
+  --color-heatmap-0-text: #5d6f86;
+  --color-heatmap-1-surface: #d5e6fa;
+  --color-heatmap-1-text: #214e85;
+  --color-heatmap-2-surface: #9fc2ed;
+  --color-heatmap-2-text: #163e70;
+  --color-heatmap-3-surface: #3c73b8;
+  --color-heatmap-4-surface: var(--color-primary);
+
+  /* Typography */
   --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-size-2xs: 10px;
   --font-size-xs: 11px;
   --font-size-sm: 12px;
@@ -31,8 +121,27 @@
   --font-size-body: 15px;
   --font-size-body-large: 16px;
   --font-size-title-small: 18px;
+  --font-size-value: 20px;
   --font-size-title: 22px;
+  --font-size-title-large: 24px;
+  --font-size-display-small: 28px;
   --font-size-display: 30px;
+  --font-size-display-large: 32px;
+  --font-size-hero: 40px;
+  --font-size-hero-large: 48px;
+  --line-height-compact: 1.2;
+  --line-height-heading: 1.4;
+  --line-height-control: 1.45;
+  --line-height-tight: 1.5;
+  --line-height-display: 1.6;
+  --line-height-body: 1.65;
+  --line-height-card: 1.7;
+  --line-height-readable: 1.8;
+  --line-height-rich: 1.95;
+  --line-height-loose: 2;
+  --line-height-hero: 2.2;
+
+  /* 4px-based spacing scale */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -41,26 +150,24 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  --space-16: 64px;
+
+  /* Shared shape, focus, motion and elevation */
   --radius-small: 4px;
   --radius-control: 8px;
   --radius-panel: 12px;
+  --radius-avatar-large: 22px;
+  --radius-avatar-compact: 16px;
   --radius-round: 999px;
   --control-height: 46px;
+  --button-height: 42px;
   --border-width: 1px;
+  --border-width-strong: 2px;
+  --border-width-accent: 3px;
+  --border-width-priority: 4px;
+  --focus-width: var(--border-width-accent);
   --focus-ring: 0 0 0 3px rgba(33,94,172,.16);
+  --focus-ring-danger: 0 0 0 3px rgba(183,53,67,.16);
+  --shadow-question-sheet: 0 5px 16px rgba(38,59,90,.02);
   --transition-fast: .16s ease;
-  --bg: var(--color-page);
-  --panel: var(--color-surface);
-  --panel-2: var(--color-surface-subtle);
-  --line: var(--color-border);
-  --text: var(--color-text);
-  --muted: var(--color-text-muted);
-  --accent: var(--color-primary);
-  --accent-soft: var(--color-primary-soft);
-  --ok: var(--color-success);
-  --warn: var(--color-warning);
-  --err: var(--color-danger);
-  --mono: var(--font-mono);
-  --radius: var(--radius-panel);
-  --control-radius: var(--radius-control);
 }

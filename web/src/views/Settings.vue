@@ -184,23 +184,23 @@ async function testConn() {
 <style scoped>
 .settings-grid {
   display: grid;
-  gap: 18px;
+  gap: var(--space-4);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
   max-width: 1180px;
   margin: 0 auto;
 }
-.settings-grid label { margin-top: 16px; }
+.settings-grid label { margin-top: var(--space-4); }
 .settings-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-  gap: 14px;
+  gap: var(--space-4);
 }
 .settings-actions {
   display: flex;
-  gap: 10px;
-  margin-top: 20px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
-.settings-feedback { margin-top: 16px; }
-.settings-warning { color: var(--warn); margin-top: 6px; }
-.settings-reference-table td:first-child { color: var(--muted); width: 46%; }
+.settings-feedback { margin-top: var(--space-4); }
+.settings-warning { color: var(--color-warning); margin-top: var(--space-2); }
+.settings-reference-table td:first-child { color: var(--color-text-muted); width: 46%; }
 </style>
