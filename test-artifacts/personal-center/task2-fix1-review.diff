@@ -1,0 +1,98 @@
+--- before/internal/study/dashboard.go
++++ after/internal/study/dashboard.go
+@@ -157,11 +157,11 @@
+ 	out.Review, err = dashboardReview(ctx, tx, user, start, end, out.Period, out.Modules)
+ 	if err != nil {
+ 		return out, err
+ 	}
+ 	// The six-module milestone is cumulative, independent of the selected window.
+-	rows, err = tx.QueryContext(ctx, `SELECT q.module,COUNT(*) FROM practice_answer a JOIN practice_session p ON p.id=a.session_id JOIN question q ON q.id=a.question_id WHERE p.user_id=? AND p.submitted_at IS NOT NULL AND julianday(p.submitted_at)<julianday(?) AND trim(a.user_answer)<>'' GROUP BY q.module`, user, end.UTC().Format(time.RFC3339))
++	rows, err = tx.QueryContext(ctx, `SELECT COALESCE(q.module,''),COUNT(*) FROM practice_answer a JOIN practice_session p ON p.id=a.session_id JOIN question q ON q.id=a.question_id WHERE p.user_id=? AND p.submitted_at IS NOT NULL AND julianday(p.submitted_at)<julianday(?) AND trim(a.user_answer)<>'' GROUP BY COALESCE(q.module,'')`, user, end.UTC().Format(time.RFC3339))
+ 	if err != nil {
+ 		return out, err
+ 	}
+ 	moduleTotals := map[string]int{}
+ 	for rows.Next() {
+@@ -224,11 +224,13 @@
+ 	return out
+ }
+ 
+ func dashboardModules(ctx context.Context, tx *sql.Tx, user int64, start, end time.Time) ([]StudyModule, error) {
+ 	modules := map[string]StudyCounts{}
+-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT module FROM question ORDER BY module`)
++	// Missing modules remain in overall totals, but cannot be actionable module
++	// filters. Do not invent a core classification or an empty-module suggestion.
++	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT COALESCE(module,'') AS module FROM question WHERE COALESCE(module,'')<>'' ORDER BY module`)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	for rows.Next() {
+ 		var name string
+@@ -241,13 +243,13 @@
+ 	err = rows.Err()
+ 	rows.Close()
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	rows, err = tx.QueryContext(ctx, `SELECT q.module,COUNT(*),SUM(CASE WHEN a.is_correct=1 THEN 1 ELSE 0 END),SUM(a.duration_ms),COUNT(DISTINCT p.id)
++	rows, err = tx.QueryContext(ctx, `SELECT COALESCE(q.module,''),COUNT(*),SUM(CASE WHEN a.is_correct=1 THEN 1 ELSE 0 END),SUM(a.duration_ms),COUNT(DISTINCT p.id)
+  FROM practice_answer a JOIN practice_session p ON p.id=a.session_id JOIN question q ON q.id=a.question_id
+- WHERE p.user_id=? AND p.submitted_at IS NOT NULL AND julianday(p.submitted_at)>=julianday(?) AND julianday(p.submitted_at)<julianday(?) AND trim(a.user_answer)<>'' GROUP BY q.module`, user, start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339))
++ WHERE p.user_id=? AND p.submitted_at IS NOT NULL AND julianday(p.submitted_at)>=julianday(?) AND julianday(p.submitted_at)<julianday(?) AND trim(a.user_answer)<>'' AND COALESCE(q.module,'')<>'' GROUP BY COALESCE(q.module,'')`, user, start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339))
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	for rows.Next() {
+ 		var name string
+--- before/internal/study/export.go
++++ after/internal/study/export.go
+@@ -36,11 +36,11 @@
+ 	where := `p.user_id=? AND p.submitted_at IS NOT NULL AND julianday(p.submitted_at)<julianday(?)`
+ 	if !start.IsZero() {
+ 		where += ` AND julianday(p.submitted_at)>=julianday(?)`
+ 		args = append(args, start.UTC().Format(time.RFC3339))
+ 	}
+-	rows, err := tx.QueryContext(ctx, `SELECT p.submitted_at,p.kind,p.id,a.question_id,q.module,a.user_answer,a.is_correct,a.duration_ms FROM practice_answer a JOIN practice_session p ON p.id=a.session_id JOIN question q ON q.id=a.question_id WHERE `+where+` ORDER BY julianday(p.submitted_at),p.id,a.ord LIMIT 5001`, args...)
++	rows, err := tx.QueryContext(ctx, `SELECT p.submitted_at,p.kind,p.id,a.question_id,COALESCE(q.module,''),a.user_answer,a.is_correct,a.duration_ms FROM practice_answer a JOIN practice_session p ON p.id=a.session_id JOIN question q ON q.id=a.question_id WHERE `+where+` ORDER BY julianday(p.submitted_at),p.id,a.ord LIMIT 5001`, args...)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	var buf bytes.Buffer
+ 	buf.WriteString("\ufeff")
+--- before/internal/study/review.go
++++ after/internal/study/review.go
+@@ -49,11 +49,11 @@
+ type reviewReader interface {
+ 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+ }
+ 
+ func prioritizedWrongs(ctx context.Context, db reviewReader, user int64) ([]WrongCandidate, error) {
+-	rows, err := db.QueryContext(ctx, `SELECT q.id,q.module,w.wrong_count,w.last_wrong_at FROM wrongbook w JOIN question q ON q.id=w.question_id WHERE w.user_id=? AND w.source='auto' AND w.resolved=0 AND q.answer_type IN ('single','multi','judge') ORDER BY w.wrong_count DESC,julianday(w.last_wrong_at) DESC,q.id LIMIT 20`, user)
++	rows, err := db.QueryContext(ctx, `SELECT q.id,COALESCE(q.module,''),w.wrong_count,w.last_wrong_at FROM wrongbook w JOIN question q ON q.id=w.question_id WHERE w.user_id=? AND w.source='auto' AND w.resolved=0 AND q.answer_type IN ('single','multi','judge') ORDER BY w.wrong_count DESC,julianday(w.last_wrong_at) DESC,q.id LIMIT 20`, user)
+ 	out := []WrongCandidate{}
+ 	if err != nil {
+ 		return out, err
+ 	}
+ 	defer rows.Close()
+@@ -113,19 +113,19 @@
+ 	rows.Close()
+ 	if err != nil {
+ 		return out, err
+ 	}
+ 	for _, m := range modules {
+-		if m.Sufficient {
++		if m.Sufficient && m.Module != "" {
+ 			out.WeakModules = append(out.WeakModules, m)
+ 		}
+ 	}
+ 	sort.SliceStable(out.WeakModules, func(i, j int) bool { return *out.WeakModules[i].Accuracy < *out.WeakModules[j].Accuracy })
+ 	if len(out.WeakModules) > 3 {
+ 		out.WeakModules = out.WeakModules[:3]
+ 	}
+-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN COALESCE(l.tertiary,'')<>'' AND c.id IS NULL THEN 1 ELSE 0 END),0)
++	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN c.id IS NULL THEN 1 ELSE 0 END),0)
+  FROM practice_answer a JOIN practice_session p ON p.id=a.session_id JOIN latest_label l ON l.question_id=a.question_id LEFT JOIN concept c ON c.module=l.subject AND c.name=l.tertiary
+  WHERE p.user_id=? AND p.submitted_at IS NOT NULL AND julianday(p.submitted_at)>=julianday(?) AND julianday(p.submitted_at)<julianday(?) AND trim(a.user_answer)<>''`, user, start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339)).Scan(&out.LabeledAnswered, &out.UnmappedLabeledAnswered); err != nil {
+ 		return out, err
+ 	}
+ 	out.LabelCoverage = accuracy(period.Answered, out.LabeledAnswered)

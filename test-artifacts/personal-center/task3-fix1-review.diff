@@ -1,0 +1,336 @@
+--- a/web/src/auth.js
++++ b/web/src/auth.js
+@@ -13,18 +13,22 @@
+ export function setUser(user) {
+   if (profileUserID !== user?.id) { profileGeneration++; auth.profile = null; profileUserID = null }
+   auth.user = user
++  if (profileUserID === user?.id && auth.profile?.username === user.username) auth.user.nickname = auth.profile.nickname
+ }
+ export function applyProfile(profile, userID = auth.user?.id) {
+   if (!auth.user || userID !== auth.user.id || profile.username !== auth.user.username) return false
++  // A valid response from this user may be older than a completed write.
++  // Treat it as an ignored read, not an identity error, and retain the high-water mark.
++  const confirmed = profileUserID === userID && auth.profile && auth.profile.revision > profile.revision ? auth.profile : profile
+   profileUserID = auth.user?.id ?? null
+-  auth.profile = profile
+-  if (auth.user) auth.user.nickname = profile.nickname
++  auth.profile = confirmed
++  auth.user.nickname = confirmed.nickname
+   return true
+ }
+ export async function loadProfile() {
+   const id = auth.user?.id, generation = ++profileGeneration
+   if (id == null) return null
+   const profile = await api.profile()
+-  if (generation === profileGeneration && auth.user?.id === id) applyProfile(profile)
+-  return generation === profileGeneration && auth.user?.id === id ? profile : null
++  if (generation === profileGeneration && auth.user?.id === id && applyProfile(profile, id)) return auth.profile
++  return null
+ }
+--- a/web/src/views/Account.vue
++++ b/web/src/views/Account.vue
+@@ -15,9 +15,9 @@
+ const ownsPage=()=>alive&&auth.user?.id===pageUserID
+ const nickname=computed(()=>profile.value?.nickname || auth.user?.username || '研习者')
+ const countdown=computed(()=>{if(!profile.value?.exam_date)return '';const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const remaining=Math.round((Date.parse(profile.value.exam_date+'T00:00:00+08:00')-Date.parse(today+'T00:00:00+08:00'))/86400000);return remaining>0?`距离考试还有 ${remaining} 天`:remaining===0?'考试日期已到':'考试日期已过'})
+-async function load(){const generation=++loadGeneration;busy.value=true;error.value='';try{const data=await api.dashboard(days.value);if(ownsPage()&&generation===loadGeneration){if(data.profile.username!==pageUsername){error.value='登录账户已变化，请重新进入个人中心';return};dashboard.value=data;if(!profile.value)saved(data.profile)}}catch(e){if(ownsPage()&&generation===loadGeneration)error.value=e.message}finally{if(ownsPage()&&generation===loadGeneration)busy.value=false}}
++async function load(){const generation=++loadGeneration;busy.value=true;error.value='';try{const data=await api.dashboard(days.value);if(ownsPage()&&generation===loadGeneration){if(data.profile.username!==pageUsername){error.value='登录账户已变化，请重新进入个人中心';return};dashboard.value=data;saved(data.profile)}}catch(e){if(ownsPage()&&generation===loadGeneration)error.value=e.message}finally{if(ownsPage()&&generation===loadGeneration)busy.value=false}}
+ async function reloadProfile(){profileError.value='';try{const p=await api.profile();if(ownsPage()&&!saved(p))profileError.value='登录账户已变化，请重新进入个人中心'}catch(e){if(ownsPage())profileError.value=e.message}}
+-function saved(p){if(!ownsPage()||p.username!==pageUsername||!applyProfile(p,pageUserID))return false;profile.value=p;if(dashboard.value)dashboard.value.profile=p;return true}
++function saved(p){if(!ownsPage()||p.username!==pageUsername||!applyProfile(p,pageUserID))return false;profile.value=auth.profile;if(dashboard.value)dashboard.value.profile=auth.profile;return true}
+ function guard(){if(!auth.user)return true;if(form.value?.busy||security.value?.busy)return false;if(form.value?.dirty||security.value?.dirty){if(!window.confirm('有尚未保存的资料或密码输入。取消可返回保存；确定将放弃修改并离开。'))return false;form.value?.reset();security.value?.reset()}return true}
+ function switchTab(i){if(i===tab.value)return true;if(!guard())return false;tab.value=i;return true}
+ async function tabKey(e,i){let target;if(e.key==='ArrowRight')target=(i+1)%4;else if(e.key==='ArrowLeft')target=(i+3)%4;else if(e.key==='Home')target=0;else if(e.key==='End')target=3;else return;e.preventDefault();if(switchTab(target)){await nextTick();tablist.value?.querySelectorAll('button')[target]?.focus()}}
+--- a/web/src/components/account/ProfileForm.vue
++++ b/web/src/components/account/ProfileForm.vue
+@@ -1,19 +1,24 @@
+ <script setup>
+-import { computed,ref,watch } from 'vue'
++import { computed,onBeforeUnmount,ref,watch } from 'vue'
+ import { api } from '../../api'
++import { auth,applyProfile } from '../../auth'
+ import Avatar from './Avatar.vue'
+ const props=defineProps({profile:Object}),emit=defineEmits(['saved'])
++const pageUserID=auth.user?.id,pageUsername=props.profile.username
++let alive=true
++onBeforeUnmount(()=>{alive=false})
++function receive(p){if(!alive||auth.user?.id!==pageUserID||p.username!==pageUsername||!applyProfile(p,pageUserID))return null;return auth.profile}
+ const fields=['nickname','bio','avatar_id','daily_questions','daily_minutes','exam_name','exam_date','default_limit','default_module','reading_size','revision']
+ const editable=p=>Object.fromEntries(fields.map(key=>[key,p[key]]))
+ const draft=ref(editable(props.profile)),baseline=ref(JSON.stringify(draft.value)),busy=ref(false),error=ref(''),notice=ref(''),conflict=ref(false),errors=ref({}),modules=ref([]),moduleError=ref(''),exportDays=ref('30'),exportBusy=ref(false),exportError=ref('')
+ const dirty=computed(()=>JSON.stringify(draft.value)!==baseline.value)
+-function reset(profile=props.profile){draft.value=editable(profile);baseline.value=JSON.stringify(draft.value);error.value='';errors.value={};conflict.value=false;notice.value=''}
+-watch(()=>props.profile,p=>{if(!dirty.value&&JSON.stringify(editable(p))!==baseline.value)reset(p)})
++function reset(profile=props.profile){if(profile.username!==pageUsername||profile.revision<draft.value.revision)return;draft.value=editable(profile);baseline.value=JSON.stringify(draft.value);error.value='';errors.value={};conflict.value=false;notice.value=''}
++watch(()=>props.profile,p=>{if(p.revision>=draft.value.revision&&!dirty.value&&JSON.stringify(editable(p))!==baseline.value)reset(p)})
+ async function loadModules(){moduleError.value='';try{const filters=await api.filters();modules.value=filters.modules || []}catch(e){moduleError.value=e.message}}
+ loadModules()
+ function validate(){const e={};for(const [key,max] of [['nickname',40],['bio',200],['exam_name',40]])if(Array.from(draft.value[key]).length>max)e[key]=`最多 ${max} 个字符`;for(const [key,min,max] of [['daily_questions',5,200],['daily_minutes',5,180]])if(!Number.isInteger(draft.value[key])||draft.value[key]<min||draft.value[key]>max)e[key]=`请输入 ${min}–${max} 的整数`;if(draft.value.exam_date&&draft.value.exam_date!==props.profile.exam_date){const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const maxDate=new Date(today+'T00:00:00Z');maxDate.setUTCFullYear(maxDate.getUTCFullYear()+5);const maxDay=maxDate.toISOString().slice(0,10);if(draft.value.exam_date<=today||draft.value.exam_date>maxDay)e.exam_date='新设置的日期需为北京时间未来日期，最多五年后'}errors.value=e;return !Object.keys(e).length}
+-async function save(){if(busy.value||conflict.value)return;error.value='';notice.value='';if(!validate()){error.value='请检查标出的资料字段';return};busy.value=true;try{const saved=await api.saveProfile(editable(draft.value));reset(saved);emit('saved',saved);notice.value=`资料与偏好已保存 · 版本 ${saved.revision}`}catch(e){error.value=e.status===409?'资料已在其他窗口更新。本页输入已保留，请先记录，再确认重新加载服务器资料。':e.message;conflict.value=e.status===409}finally{busy.value=false}}
+-async function reload(){if(busy.value)return;if(!window.confirm('重新加载会放弃本页尚未保存的资料，请先记录本页输入。确定重新加载吗？'))return;busy.value=true;try{const p=await api.profile();reset(p);emit('saved',p)}catch(e){error.value=e.message}finally{busy.value=false}}
++async function save(){if(busy.value||conflict.value)return;error.value='';notice.value='';if(!validate()){error.value='请检查标出的资料字段';return};busy.value=true;try{const saved=await api.saveProfile(editable(draft.value)),confirmed=receive(saved);if(!confirmed)return;reset(confirmed);emit('saved',confirmed);notice.value=confirmed.revision===saved.revision?`资料与偏好已保存 · 版本 ${saved.revision}`:`本次保存已完成（版本 ${saved.revision}），已同步较新资料（版本 ${confirmed.revision}）`}catch(e){error.value=e.status===409?'资料已在其他窗口更新。本页输入已保留，请先记录，再确认重新加载服务器资料。':e.message;conflict.value=e.status===409}finally{busy.value=false}}
++async function reload(){if(busy.value)return;if(!window.confirm('重新加载会放弃本页尚未保存的资料，请先记录本页输入。确定重新加载吗？'))return;busy.value=true;try{const p=receive(await api.profile());if(p){reset(p);emit('saved',p)}}catch(e){error.value=e.message}finally{busy.value=false}}
+ async function download(){if(exportBusy.value)return;exportBusy.value=true;exportError.value='';try{const blob=await api.exportRecords(exportDays.value);const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='行测研习-个人作答记录.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){exportError.value=e.message}finally{exportBusy.value=false}}
+ defineExpose({dirty,busy,reset})
+ </script>
+--- a/test-artifacts/personal_center_regression.py
++++ b/test-artifacts/personal_center_regression.py
+@@ -1,5 +1,5 @@
+ """Real browser personal-center regression against an isolated service only.
+-Usage: python3 test-artifacts/personal_center_regression.py BASE [ISOLATED_DB] [--red]
++Usage: python3 test-artifacts/personal_center_regression.py BASE [ISOLATED_DB] [--red|--profile-ordering]
+ """
+ import datetime, json, sqlite3, sys, time
+ from pathlib import Path
+@@ -7,6 +7,7 @@
+ 
+ base = sys.argv[1].rstrip('/')
+ red = '--red' in sys.argv
++profile_ordering_only = '--profile-ordering' in sys.argv
+ output = Path('test-artifacts/personal-center')
+ output.mkdir(exist_ok=True)
+ report = {'checks': [], 'console_errors': []}
+@@ -30,6 +31,185 @@
+     password = 'personal-test-password'
+     assert api('/auth/register','POST',{'username':username,'password':password})['status']==201
+     assert api('/auth/login','POST',{'username':username,'password':password})['status']==200
++
++    def profile_ordering_regression():
++        held=[];calls=[0]
++        def initial_get(route):
++            calls[0]+=1
++            if calls[0]==1:
++                route.fulfill(status=500,content_type='application/json',body=json.dumps({'error':'验收：路由资料暂不可用'}))
++            elif calls[0]==2:
++                held.append((route,route.fetch()))
++            else:
++                route.continue_()
++        page.route('**/api/account/profile',initial_get)
++        page.goto(base+'/account')
++        page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        expect(page.get_by_label('昵称',exact=True)).to_be_visible()
++        assert len(held)==1
++        old=held[0][1].json()
++        page.get_by_label('昵称',exact=True).fill('已经确认的新资料')
++        page.get_by_label('默认题量',exact=True).select_option('10')
++        page.get_by_label('练习正文字号',exact=True).select_option('20')
++        page.get_by_role('button',name='头像样式 3',exact=True).click()
++        page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++        new=api('/account/profile')['body']
++        assert new['revision']==old['revision']+1
++        expect(page.get_by_role('status').filter(has_text=f'版本 {new["revision"]}')).to_be_visible()
++        route,response=held.pop()
++        with page.expect_response(lambda r:r.url.endswith('/api/account/profile') and r.request.method=='GET'):
++            route.fulfill(response=response)
++        page.unroute('**/api/account/profile')
++        page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
++        expect(page.get_by_label('昵称',exact=True)).to_have_value('已经确认的新资料')
++        expect(page.locator('.topbar-user')).to_contain_text('已经确认的新资料')
++        expect(page.locator('.topbar-user .pc-avatar')).to_have_class('avatar pc-avatar pc-avatar-3')
++        expect(page.get_by_label('默认题量',exact=True)).to_have_value('10')
++        expect(page.get_by_label('练习正文字号',exact=True)).to_have_value('20')
++        expect(page.locator('.pc-profile-form .pc-card-heading .pc-tag')).to_contain_text(f'版本 {new["revision"]}')
++        expect(page.get_by_role('alert').filter(has_text='登录账户已变化')).to_have_count(0)
++        page.get_by_label('昵称',exact=True).fill('后续保存仍然成功')
++        page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++        expect(page.get_by_role('status').filter(has_text=f'版本 {new["revision"]+1}')).to_be_visible()
++        assert api('/account/profile')['body']['revision']==new['revision']+1
++        report['checks'].append('same-user old initial profile GET cannot revert successful PUT, form/topbar/preferences/revision; next PUT succeeds')
++
++        def assert_profile(p):
++            expect(page.get_by_label('昵称',exact=True)).to_have_value(p['nickname'])
++            expect(page.locator('.topbar-user')).to_contain_text(p['nickname'])
++            expect(page.locator('.topbar-user .pc-avatar')).to_have_class(f'avatar pc-avatar pc-avatar-{p["avatar_id"]}')
++            expect(page.get_by_label('默认题量',exact=True)).to_have_value(str(p['default_limit']))
++            expect(page.get_by_label('练习正文字号',exact=True)).to_have_value(str(p['reading_size']))
++            expect(page.locator('.pc-profile-form .pc-card-heading .pc-tag')).to_contain_text(f'版本 {p["revision"]}')
++            expect(page.get_by_role('alert').filter(has_text='登录账户已变化')).to_have_count(0)
++        def save_as(name):
++            page.get_by_label('昵称',exact=True).fill(name)
++            previous=api('/account/profile')['body']['revision']
++            page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++            expect(page.get_by_role('status').filter(has_text=f'版本 {previous+1}')).to_be_visible()
++            p=api('/account/profile')['body']
++            assert p['revision']==previous+1
++            return p
++
++        # A real old dashboard snapshot also carries a profile. Its other counts
++        # remain useful, but its embedded older profile must not lower confirmed data.
++        held_dash=[];calls=[0]
++        def fail_first_get(route):
++            calls[0]+=1
++            if calls[0]==1:
++                route.fulfill(status=500,content_type='application/json',body=json.dumps({'error':'验收：首次资料读取失败'}))
++            else:
++                route.continue_()
++        page.route('**/api/account/profile',fail_first_get)
++        page.route('**/api/account/dashboard?days=30',lambda route:held_dash.append((route,route.fetch())))
++        page.goto(base+'/account');page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        expect(page.get_by_label('昵称',exact=True)).to_be_visible()
++        assert len(held_dash)==1
++        page.get_by_label('默认题量',exact=True).select_option('50')
++        page.get_by_label('练习正文字号',exact=True).select_option('18')
++        page.get_by_label('每日作答目标',exact=True).fill('35')
++        page.get_by_label('每日分钟目标',exact=True).fill('45')
++        page.get_by_role('button',name='头像样式 6',exact=True).click()
++        newest=save_as('初始化看板之前的新保存')
++        route,response=held_dash.pop()
++        with page.expect_response(lambda r:'/api/account/dashboard?' in r.url):
++            route.fulfill(response=response)
++        page.unroute('**/api/account/dashboard?days=30');page.unroute('**/api/account/profile')
++        assert_profile(newest)
++        page.get_by_role('tab',name='学习总览',exact=True).click()
++        expect(page.locator('.pc-goal-count').first).to_contain_text('/ 35 次')
++        expect(page.locator('.pc-goal-count').nth(1)).to_contain_text('/ 45 分钟')
++        page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        save_as('看板迟到后继续保存')
++        report['checks'].append('same-user late dashboard profile keeps newest profile/goals and next PUT succeeds')
++
++        # The route guard's auth.loadProfile GET reads N while the mounted form
++        # completes N+1 before navigation. New question defaults must use N+1.
++        held_auth=[];captured=[False]
++        def late_auth_get(route):
++            if route.request.method=='GET' and not captured[0]:
++                captured[0]=True;held_auth.append((route,route.fetch()))
++            else:
++                route.continue_()
++        page.route('**/api/account/profile',late_auth_get)
++        page.locator('.sidebar nav').get_by_role('link',name='题库练习',exact=True).click()
++        expect(page).to_have_url(base+'/account')
++        page.wait_for_timeout(100)
++        assert len(held_auth)==1
++        page.get_by_label('默认题量',exact=True).select_option('10')
++        page.get_by_label('练习正文字号',exact=True).select_option('20')
++        page.get_by_role('button',name='头像样式 7',exact=True).click()
++        newest=save_as('路由资料读取之后的新保存')
++        route,response=held_auth.pop();route.fulfill(response=response)
++        page.unroute('**/api/account/profile')
++        expect(page).to_have_url(base+'/questions')
++        expect(page.locator('.session-controls select')).to_have_value('10')
++        expect(page.locator('.topbar-user')).to_contain_text(newest['nickname'])
++        expect(page.locator('.topbar-user .pc-avatar')).to_have_class('avatar pc-avatar pc-avatar-7')
++        page.locator('.topbar').get_by_role('link',name='打开个人中心',exact=True).click()
++        page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        assert_profile(newest)
++        save_as('路由迟到读取后继续保存')
++        report['checks'].append('auth.loadProfile late GET returns confirmed newer cache, preserves topbar/defaults and next PUT succeeds')
++
++        # A successful old PUT ACK arrives after an independent real PUT N+2 has
++        # already been confirmed by the pending initialization GET.
++        held_read=[];held_ack=[];calls=[0]
++        def init_read(route):
++            if route.request.method!='GET':
++                route.continue_();return
++            calls[0]+=1
++            if calls[0]==1:
++                route.fulfill(status=500,content_type='application/json',body=json.dumps({'error':'验收：首次资料读取失败'}))
++            elif calls[0]==2:
++                held_read.append(route)
++            else:
++                route.continue_()
++        page.route('**/api/account/profile',init_read)
++        page.goto(base+'/account');page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        expect(page.get_by_label('昵称',exact=True)).to_be_visible()
++        assert len(held_read)==1
++        def hold_put(route):
++            if route.request.method=='PUT':
++                held_ack.append((route,route.fetch()))
++            else:
++                route.fallback()
++        page.route('**/api/account/profile',hold_put)
++        page.get_by_label('昵称',exact=True).fill('这次保存的较旧ACK')
++        page.get_by_label('默认题量',exact=True).select_option('20')
++        page.get_by_label('练习正文字号',exact=True).select_option('16')
++        page.get_by_role('button',name='头像样式 1',exact=True).click()
++        page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++        expect(page.get_by_label('昵称',exact=True)).to_be_disabled()
++        assert len(held_ack)==1 and held_ack[0][1].status==200
++        ack=held_ack[0][1].json()
++        # Stop intercepting PUT while preserving the held ACK and init GET.
++        page.unroute('**/api/account/profile',hold_put)
++        keys=['nickname','bio','avatar_id','daily_questions','daily_minutes','exam_name','exam_date','default_limit','default_module','reading_size','revision']
++        update={key:ack[key] for key in keys}
++        update.update(nickname='同账号另一窗口确认的较新版本',avatar_id=6,default_limit=50,reading_size=18)
++        result=api('/account/profile','PUT',update)
++        assert result['status']==200
++        newest=result['body'];assert newest['revision']==ack['revision']+1
++        held_read.pop().continue_()
++        expect(page.locator('.topbar-user')).to_contain_text(newest['nickname'])
++        expect(page.locator('.pc-profile-form .pc-card-heading .pc-tag')).to_contain_text(f'版本 {newest["revision"]}')
++        # The pending submitted input remains protected until its ACK is delivered.
++        expect(page.get_by_label('昵称',exact=True)).to_have_value('这次保存的较旧ACK')
++        route,response=held_ack.pop();route.fulfill(response=response)
++        page.unroute('**/api/account/profile')
++        expect(page.get_by_role('status').filter(has_text=f'已同步较新资料（版本 {newest["revision"]}）')).to_be_visible()
++        assert_profile(newest)
++        save_as('较旧ACK之后继续保存')
++        report['checks'].append('older successful PUT ACK cannot lower newer same-user GET confirmation; pending dirty input protected, newest form/cache retained and next PUT succeeds')
++
++    if profile_ordering_only:
++        profile_ordering_regression()
++        browser.close();db.close()
++        assert not report['console_errors'],report['console_errors']
++        (output/'task3-fix1-browser-results.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
++        print(json.dumps(report,ensure_ascii=False,indent=2));sys.exit(0)
++
+     page.goto(base + '/account')
+     if red:
+         page.screenshot(path=str(output/'task3-red-old-account.png'), full_page=True)
+--- a/docs/personal-center-task3-report.md
++++ b/docs/personal-center-task3-report.md
+@@ -157,3 +157,55 @@
+ 自审确认：数据和 DTO 单位正确；零分母/少样本不伪造分数；profile 不发送身份字段；头像、字号受控；文本使用 Vue 转义；无付费诊断入口；无凭据 URL；全部复习进入既有判分链；退出失败与迟到响应不会跳过保护或写入别人的缓存；Practice 的旧保存/交卷逻辑没有重写。
+ 
+ 本任务尚未执行正式库迁移/大库恢复、Linux 发布打包、完整旧 24 项浏览器回归、Go 全量/race/vet 或真实屏幕阅读器/其他浏览器测试，这些属于 Task 4 集成和交付。Chrome DOM 语义、键盘交互、reduced-motion、桌面与 375px 布局已有实际验证。独立规格/质量审查由主代理安排，本报告不将未执行的独立审查标为通过。
++
++## 独立审查修复轮 1/5：R1 同账号资料版本不回退
++
++已完整阅读 `docs/personal-center-task3-review.md`，按 receiving-code-review / systematic-debugging / TDD 核对唯一 Important R1。审查报告未修改。根因是原身份/存活检查无法区分同账号的旧 revision：初始化 profile GET 读出 N，dashboard 先建立表单后 PUT 已确认 N+1，旧 GET 仍被接收，并触发 clean 表单回退。
++
++先在既有正式脚本新增 `--profile-ordering`，通过真实 Cookie、HTTP、PUT 与延期的真实 GET 响应复现，不用临时 stdin 浏览器程序。红灯命令：
++
++```sh
++python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering
++```
++
++修复前退出码 1：
++
++```text
++Locator expected to have Value '已经确认的新资料'
++Actual value: ""
++```
++
++即服务器 PUT 已成功 N+1，旧初始化 GET 释放后，页面昵称退回 N 的空值，与审查链一致。
++
++本轮仅修改：
++
++- `web/src/auth.js`：`applyProfile` 在同 owner 下选择已确认最高 revision 的完整资料；较旧同账号响应视为正常忽略，返回成功受理，避免误报账号变化。nickname 同步最高版本；`setUser` 不用无 revision 的 `/me` 昵称覆盖确认资料；`loadProfile` 返回当前确认对象，保留原 generation/身份隔离。
++- `web/src/views/Account.vue`：初始化 dashboard、profile GET 和保存通知统一经 `saved` 接收；页面与 dashboard.profile 引用当前确认对象，旧版本不能覆盖。
++- `web/src/components/account/ProfileForm.vue`：重载/保存 ACK 经同一接收规则选用最高确认资料；watch/reset 拒绝低 revision；接收仍检查存活、用户 ID、用户名。若成功 ACK 比已确认版本旧，保留最新表单并明确显示“本次保存已完成…已同步较新资料”，不把旧 ACK 的字段作为最新保存状态。
++- `test-artifacts/personal_center_regression.py`：新增正式定向模式和四个交错场景；保留原 17 组和旧断言。
++
++原 CAS、dirty/400/409、跨账号清理、保存禁用、Cookie 与后端/schema 均未重写。本轮未修改 Go 源码，也未重复主代理已通过的 Go 全量/race/vet；仅重新编译嵌入前端的临时 CLI。
++
++绿灯使用最新产物：`npm run build` 退出码 0（60 modules，1.79s）；`env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -o test-artifacts/personal-center/_work/gk-task3 ./cmd/gk` 退出码 0。主代理停止其工具会话中的旧服务后，本代理重新启动最新 binary，服务会话为 `3833`，仍使用既有隔离 task3.sqlite/合成 key/18083。
++
++同一 `--profile-ordering` 命令最终退出码 0，4 组，`console_errors: []`：
++
++1. 旧初始化 profile GET 在成功 PUT 后到达，表单、顶部昵称/头像、偏好、版本保持 N+1，下一次 PUT 成功。
++2. 旧 dashboard 内嵌资料迟到，最新资料与双目标保持，下一次 PUT 成功。
++3. 路由 `auth.loadProfile` 读出 N 后，同页成功保存 N+1，再释放路由 GET；题库默认值和顶部使用 N+1，回到表单继续保存成功。
++4. 本页 PUT 的真实成功 ACK 被延期，另一个真实 PUT 的较新版本先由初始化 GET 确认；等待中的本页输入不被覆盖，旧 ACK 到达后保留最新资料并说明同步版本，下一次 PUT 成功。
++
++定向结果：[task3-fix1-browser-results.json](../test-artifacts/personal-center/task3-fix1-browser-results.json)。
++
++原回归最终命令均退出码 0：
++
++```sh
++python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite
++python3 test-artifacts/round2_fixes_ui.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite
++git diff --check
++python3 -m py_compile test-artifacts/personal_center_regression.py
++```
++
++原个人中心 17 组（包括跨账号迟到 GET/PUT、读取失败切换账号、CAS/dirty/退出失败保护）及原草稿/密码 6 组均通过，两个结果文件的 `console_errors` 都为空。本轮没有权限等待或 Chrome 运行阻塞；父代理旧服务 session 无法由子工具控制时即时报告，由父代理正常停止后继续。
++
++本轮对照 `_work/task3-fix1-before` 快照生成 [task3-fix1-review.diff](../test-artifacts/personal-center/task3-fix1-review.diff)，涵盖上述 4 个文件及本报告追加部分。没有改独立审查报告、提交、推送、部署或操作正式 DB/原密钥。后续定向复审由主代理执行。

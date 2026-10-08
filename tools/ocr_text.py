@@ -88,6 +88,7 @@ def main() -> int:
 
     t0 = time.time()
     ocr = PaddleOCR(
+        ocr_version="PP-OCRv5",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,

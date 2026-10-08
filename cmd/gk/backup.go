@@ -16,18 +16,45 @@ import (
 func cmdBackup(args []string) error {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	dbFile := fs.String("db", "var/db/gk.sqlite", "源数据库路径")
+	bundle := fs.String("bundle", "", "完整备份新目录（快照 + 有效密钥 + 完成标记）")
+	verify := fs.String("verify-bundle", "", "只读校验完整备份目录")
+	keyFile := fs.String("secret-key-file", secretKeyFile, "源配置密钥文件；GK_SECRET_KEY 优先")
 	out := fs.String("out", "", "新快照文件路径（必须不存在）")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *out == "" {
-		return errors.New("用法: gk backup --db <源数据库> --out <新快照文件>")
+	if *verify != "" {
+		if *out != "" || *bundle != "" {
+			return errors.New("校验模式不能同时生成备份")
+		}
+		if err := verifyBackupBundle(*verify); err != nil {
+			return err
+		}
+		fmt.Println("完整备份校验通过")
+		return nil
 	}
-	source, err := filepath.Abs(*dbFile)
+	if *bundle != "" {
+		if *out != "" {
+			return errors.New("--out 与 --bundle 只能选择一个")
+		}
+		return createBackupBundle(*dbFile, *bundle, *keyFile)
+	}
+	if *out == "" {
+		return errors.New("用法: gk backup --db <源库> --bundle <新目录> 或 --out <快照文件>")
+	}
+	if err := createSnapshot(*dbFile, *out); err != nil {
+		return err
+	}
+	fmt.Printf("一致性快照已生成: %s\n这是仅数据库快照；完整备份请使用 --bundle，图片目录另行备份。\n", *out)
+	return nil
+}
+
+func createSnapshot(dbFile, out string) error {
+	source, err := filepath.Abs(dbFile)
 	if err != nil {
 		return err
 	}
-	target, err := filepath.Abs(*out)
+	target, err := filepath.Abs(out)
 	if err != nil {
 		return err
 	}
@@ -61,9 +88,20 @@ func cmdBackup(args []string) error {
 	if err = os.Chmod(staged, 0600); err != nil {
 		return err
 	}
+	snapshot, err := os.OpenFile(staged, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	err = snapshot.Sync()
+	closeErr := snapshot.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
 	if err = os.Link(staged, target); err != nil {
 		return fmt.Errorf("创建快照目标失败（文件不能已存在）: %w", err)
 	}
-	fmt.Printf("一致性快照已生成: %s\n请同时备份配置加密密钥与图片目录。\n", target)
 	return nil
 }

@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "same-user old initial profile GET cannot revert successful PUT, form/topbar/preferences/revision; next PUT succeeds",
+    "same-user late dashboard profile keeps newest profile/goals and next PUT succeeds",
+    "auth.loadProfile late GET returns confirmed newer cache, preserves topbar/defaults and next PUT succeeds",
+    "older successful PUT ACK cannot lower newer same-user GET confirmation; pending dirty input protected, newest form/cache retained and next PUT succeeds"
+  ],
+  "console_errors": []
+}

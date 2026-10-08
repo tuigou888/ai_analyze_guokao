@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-02",
+  "baseline_go_tests": "pass",
+  "browser_checks": 18,
+  "browser_console_errors": [],
+  "service_submit_cases": [
+    {
+      "concurrency": 1,
+      "success": 1,
+      "failed": 0
+    },
+    {
+      "concurrency": 2,
+      "success": 1,
+      "failed": 1
+    },
+    {
+      "concurrency": 5,
+      "success": 3,
+      "failed": 2
+    },
+    {
+      "concurrency": 10,
+      "success": 7,
+      "failed": 3
+    },
+    {
+      "concurrency": 20,
+      "success": 8,
+      "failed": 12
+    }
+  ],
+  "http_submit_case": {
+    "concurrency": 20,
+    "http_200": 7,
+    "http_500": 13
+  },
+  "scope": "temporary synthetic databases, GOMAXPROCS=2; batch observations, not production capacity",
+  "other_confirmed": [
+    "stale second-tab draft clears earlier answer without conflict",
+    "wrong current password returns 401 while existing session remains valid",
+    "reveal rejects wrong nonempty submission",
+    "environment-key backup succeeds without a recoverable key",
+    "clean source build fails without generated web_dist"
+  ],
+  "temporary_evidence_note": "Temporary execution files/processes were reclaimed by the environment after continued user input; tool results are recorded here. Production source and database were not modified.",
+  "production_verdict": "not ready for formal multiuser launch"
+}

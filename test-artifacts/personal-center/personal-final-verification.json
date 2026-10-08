@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-06",
+  "status": "final independent review pending",
+  "go_full": {
+    "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./... -count=1",
+    "exit_code": 0,
+    "output": "cmd/gk 0.445s; admin 0.347s; distill 3.212s; ingest 9.850s; llm 0.003s; media 0.318s; serve 9.842s; setting 0.045s; store 0.777s; study 0.430s; model no test files"
+  },
+  "package": {
+    "sha256": "82beae21a4cc421653f47b843d7944e7fad0b426d9942089b02cb19d4bb09e3d",
+    "files": 18,
+    "exit_code": 0,
+    "method": "Root read-only tar audit; actual hash matches sealed manifest, members match original current files, no runtime DB/key/backup/test files"
+  },
+  "git_diff_check": {
+    "exit_code": 0
+  },
+  "integration_evidence": "task4-results.json / task4-root-precheck.json",
+  "browser_checks": 45,
+  "unverified": [
+    "formal DB/key migration",
+    "production HTTPS/proxy/load/long-run",
+    "cross-machine restore",
+    "Windows/macOS native runtime",
+    "other browsers/real screen readers"
+  ]
+}

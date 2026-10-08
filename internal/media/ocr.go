@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -138,17 +139,22 @@ func RunOCR(ctx context.Context, db *sql.DB, opt OCROptions) (*OCRStats, error) 
 		return nil, err
 	}
 	st := &OCRStats{Candidates: candidates, Unique: len(work)}
+	start := time.Now()
+	defer func() { st.Duration = time.Since(start); st.Missing = max(st.Unique-st.Done-st.Failed, 0) }()
 	if len(work) == 0 {
 		return st, nil
 	}
 
 	runDir := filepath.Join(opt.RunDir, time.Now().Format("ocr-20060102-150405"))
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		return nil, err
+		return st, err
 	}
-	start := time.Now()
+	var runErr error
 
 	for i := 0; i < len(work); i += opt.ShardSize {
+		if ctx.Err() != nil {
+			return st, errors.Join(runErr, ctx.Err())
+		}
 		end := i + opt.ShardSize
 		if end > len(work) {
 			end = len(work)
@@ -159,7 +165,7 @@ func RunOCR(ctx context.Context, db *sql.DB, opt OCROptions) (*OCRStats, error) 
 		manifest := filepath.Join(runDir, fmt.Sprintf("manifest-%03d.jsonl", st.Shards))
 		outFile := filepath.Join(runDir, fmt.Sprintf("result-%03d.jsonl", st.Shards))
 		if err := writeManifest(manifest, shard); err != nil {
-			return nil, err
+			return st, errors.Join(runErr, err)
 		}
 
 		fmt.Fprintf(os.Stderr, "[%d/%d] shard %d：%d 张 → %s\n",
@@ -167,10 +173,29 @@ func RunOCR(ctx context.Context, db *sql.DB, opt OCROptions) (*OCRStats, error) 
 		if err := runWorker(ctx, opt, manifest, outFile); err != nil {
 			// 单个 shard 失败不中止整轮：已完成的结果已在盘上，其余 shard 继续。
 			fmt.Fprintf(os.Stderr, "  shard %d 失败（其余继续）: %v\n", st.Shards, err)
+			runErr = errors.Join(runErr, fmt.Errorf("shard %d worker 失败: %w", st.Shards, err))
 		}
 		res, err := readResults(outFile)
 		if err != nil {
-			return nil, err
+			return st, errors.Join(runErr, err)
+		}
+		expected := make(map[string]bool, len(shard))
+		for _, w := range shard {
+			expected[w.SHA256] = true
+		}
+		seen := map[string]bool{}
+		valid := true
+		for _, r := range res {
+			if !expected[r.SHA256] || seen[r.SHA256] || (r.Status != "ok" && r.Status != "error") {
+				valid = false
+				break
+			}
+			seen[r.SHA256] = true
+		}
+		if !valid {
+			st.Missing += len(shard)
+			runErr = errors.Join(runErr, fmt.Errorf("shard %d 结果包含重复、未知 sha256 或无效状态，拒绝回填", st.Shards))
+			continue
 		}
 		// 防线：worker 必须为每一张图返回一条记录。
 		// predict 会静默跳过不支持的格式（如 GIF），一旦 worker 用 zip 配对，
@@ -181,10 +206,11 @@ func RunOCR(ctx context.Context, db *sql.DB, opt OCROptions) (*OCRStats, error) 
 				"  ⚠ shard %d：期望 %d 条识别记录，实际 %d 条，差额 %d 张未完成（重跑可补齐）\n",
 				st.Shards, len(shard), len(res), len(shard)-len(res))
 			st.Missing += len(shard) - len(res)
+			runErr = errors.Join(runErr, fmt.Errorf("shard %d 识别记录不完整：期望 %d，实际 %d", st.Shards, len(shard), len(res)))
 		}
 		ok, failed, model, err := applyResults(ctx, db, res, opt.Engine)
 		if err != nil {
-			return nil, err
+			return st, errors.Join(runErr, err)
 		}
 		st.Done += ok
 		st.Failed += failed
@@ -194,7 +220,10 @@ func RunOCR(ctx context.Context, db *sql.DB, opt OCROptions) (*OCRStats, error) 
 	}
 
 	st.Duration = time.Since(start)
-	return st, nil
+	if st.Failed > 0 {
+		runErr = errors.Join(runErr, fmt.Errorf("%d 张图片识别失败", st.Failed))
+	}
+	return st, runErr
 }
 
 func writeManifest(path string, work []Work) error {

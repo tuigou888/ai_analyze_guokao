@@ -92,7 +92,8 @@ vet:
 	go vet ./...
 
 clean:
-	rm -rf var/
+	rm -f var/gk var/gk-linux-amd64.tar.gz
+	rm -rf var/release/
 
 # 本地构建服务器部署包；不打包数据库、图片或密钥，不执行蒸馏。
 release: web
@@ -100,8 +101,10 @@ release: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -o var/release/gk ./cmd/gk
 	cp -R deploy taxonomy var/release/
 	cp README.md var/release/README.md
-	cp docs/deployment-2c4g.md docs/api-design.md docs/website-completion.md var/release/docs/
-	tar -czf var/gk-linux-amd64.tar.gz -C var/release README.md gk deploy taxonomy docs
+	cp 第一轮修复文档.md var/release/
+	cp 第二轮修复文档.md 第二轮上线就绪审查报告.md var/release/
+	cp docs/deployment-2c4g.md docs/api-design.md docs/website-completion.md docs/ocr-environment.md docs/personal-center.md docs/personal-center-task4-report.md docs/personal-center-final-fix-report.md var/release/docs/
+	tar -czf var/gk-linux-amd64.tar.gz -C var/release README.md 第一轮修复文档.md 第二轮修复文档.md 第二轮上线就绪审查报告.md gk deploy taxonomy docs
 
 backup: build
-	./var/gk backup --db $(DB) --out var/backups/gk-$(shell date +%Y%m%d-%H%M%S).sqlite
+	./var/gk backup --db $(DB) --bundle var/backups/gk-$(shell date +%Y%m%d-%H%M%S) --secret-key-file var/secret.key

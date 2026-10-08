@@ -1,0 +1,487 @@
+--- a/README.md
++++ b/README.md
+@@ -7,6 +7,8 @@
+ | 文档 | 内容 |
+ |---|---|
+ | [本地运行与腾讯云宝塔部署手册](docs/deployment-2c4g.md) | 本地开发、建库、源码运行、2 核 4GB 服务器部署、HTTPS、备份与升级 |
++| [个人中心使用与统计口径](docs/personal-center.md) | 资料、偏好、目标、真实学习看板、复习助手、会话与 CSV |
++| [个人中心集成交付记录](docs/personal-center-task4-report.md) | v12 迁移/恢复、回归、跨平台编译与本地发布包验收 |
+ | [网站 API 说明](docs/api-design.md) | 接口、认证、判分和数据口径 |
+ | [网站开发与验收记录](docs/website-completion.md) | 已完成页面、功能和验收边界 |
+ | [第一轮修复文档](第一轮修复文档.md) | 严重问题逐项状态、回归、依赖和本地验收 |
+@@ -20,6 +22,7 @@
+ - 从题库随机练习，或按原卷模块与题序组卷；支持保存草稿、判分与学习记录。
+ - 支持单选、多选、判断题和 A–H 等扩展选项；标准答案和解析在有效作答后显示。
+ - 错题自动收录，可收藏、订正、再次练习；考点页展示已有标注和个人作答统计。
++- 个人中心提供四个页签，保存个人资料、目标和练习偏好，展示北京时间真实提交趋势、模块样本和 90 日活动；可续做、优先复练错题、管理登录会话并导出本人记录。
+ - 前端支持公式、材料和题图显示。管理入口独立于普通用户，可配置模型 API。
+ - v7 SQLite 迁移初始化用户、会话、练习记录、错题、考点映射和中文 FTS5 索引。
+ 
+--- a/Makefile
++++ b/Makefile
+@@ -103,7 +103,7 @@
+ 	cp README.md var/release/README.md
+ 	cp 第一轮修复文档.md var/release/
+ 	cp 第二轮修复文档.md 第二轮上线就绪审查报告.md var/release/
+-	cp docs/deployment-2c4g.md docs/api-design.md docs/website-completion.md docs/ocr-environment.md var/release/docs/
++	cp docs/deployment-2c4g.md docs/api-design.md docs/website-completion.md docs/ocr-environment.md docs/personal-center.md docs/personal-center-task4-report.md var/release/docs/
+ 	tar -czf var/gk-linux-amd64.tar.gz -C var/release README.md 第一轮修复文档.md 第二轮修复文档.md 第二轮上线就绪审查报告.md gk deploy taxonomy docs
+ 
+ backup: build
+--- a/docs/api-design.md
++++ b/docs/api-design.md
+@@ -1,6 +1,6 @@
+ # 网站 API（p3-next-steps A/B/C 实现）
+ 
+-所有业务接口在 `/api` 下，以 JSON 收发。错误格式：`{"error":"错误说明"}`。普通用户通过 HttpOnly Cookie `gk_user` 鉴权；管理员使用独立 Cookie `gk_admin`，两者不互通。会话存储在 SQLite，普通用户 token 只存 SHA-256 摘要，密码使用 bcrypt。写请求检查同源，API 响应不缓存。
++所有业务接口在 `/api` 下，通常以 JSON 收发；个人记录导出成功为 `text/csv` 附件。错误格式：`{"error":"错误说明"}`。普通用户通过 HttpOnly Cookie `gk_user` 鉴权；管理员使用独立 Cookie `gk_admin`，两者不互通。会话存储在 SQLite，普通用户 token 只存 SHA-256 摘要，密码使用 bcrypt。写请求检查同源，API 响应不缓存。
+ 
+ ## 账户
+ 
+@@ -13,6 +13,29 @@
+ | POST | `/auth/password` | `{current_password,password}`；改密后撤销所有旧会话 |
+ 
+ 用户名 3–32 字符，只支持字母、数字、`_`、`-`；密码 8–72 字节；昵称最多 40 字。用户名冲突 409。登录失败统一 401。登录、注册、管理员登录每来源每分钟最多 30 次，密码计算最多 2 个并行任务，超过返回 429。
++
++## 个人中心（v12，需要普通用户 Cookie）
++
++| 方法 | 路径 | 请求 / 响应 |
++|---|---|---|
++| GET | `/account/profile` | 本人 Profile；缺行兼容默认值，GET 不隐式写入 |
++| PUT | `/account/profile` | 完整 ProfileUpdate + revision → 保存后的 Profile；400 校验错误，409 旧版本 |
++| GET | `/account/dashboard?days=30` | days 仅 7/30/90；Dashboard |
++| GET | `/account/sessions?page=1` | `{items,total,page,size:20}`，本人未过期会话 |
++| DELETE | `/account/sessions/{public_id}` | 撤销本人其他会话；当前为 400，他人/不存在为 404 |
++| POST | `/account/sessions/revoke-others` | 空 body 或 `{}` → `{revoked}`，保留当前 Cookie |
++| POST | `/account/review/wrongbook` | 空 body 或 `{}` → 原 Session；本人待订正自动错题最多 20 道，无候选 400 |
++| GET | `/account/export?days=30` | days 仅 7/30/90/all；带 BOM 的 UTF-8 CSV，固定附件名 `study-records.csv`；超过 5,000 行整体 400 |
++
++Profile 字段：`username,nickname,bio,avatar_id,created_at,updated_at,daily_questions,daily_minutes,exam_name,exam_date,default_limit,default_module,reading_size,revision`。ProfileUpdate 只接受 `nickname,bio,avatar_id,daily_questions,daily_minutes,exam_name,exam_date,default_limit,default_module,reading_size,revision`，每个字段必填且不可 null；额外字段（包括 user_id 和大小写别名）拒绝。revision 是独立于草稿版本的整数；昵称与资料在同一事务中保存。409 后保留输入，由用户确认重新加载，不自动重试旧数据。
++
++昵称/简介/考试名称最多 40/200/40 个 Unicode 字符；头像 0–7；每日作答 5–200、分钟 5–180；默认题量 10/20/50、模块为空或题库实际模块、字号 16/18/20。新考试日期须为北京时间未来日期且最多五年后；已存到期日期可原样保留更新其他资料。默认头像 0、作答 20、分钟 30、题量 20、全部模块、字号 16、revision 0。用户名/注册时间只读。
++
++Dashboard 字段：`timezone,start_date,end_date,days,profile,lifetime,period,previous,today,trend,modules,activity,streak,achievements,review`。计数组为 `answered,correct,accuracy,duration_ms,sessions`；accuracy 是 0–100 数值或 null。trend 长度为 days，activity 固定最近 90 日，都含 date；modules 含 module/sufficient；streak 含 current/longest/practiced_today；achievements 含 id/name/current/target/unlocked。review 含 `unfinished,weak_modules,weak_concepts,labeled_answered,unmapped_labeled_answered,label_coverage,wrong,favorites,wrong_candidates`，空数组为 `[]`；续做最多 3 份、薄弱模块/可练考点最多 3 项且至少 5 次样本。缺稳定映射的标签仍计覆盖，不生成无效考点入口。详细统计口径见 [个人中心说明](personal-center.md)。
++
++会话 item 只含 `public_id,current,device_label,ip_hint,created_at,expires_at`；历史元数据为 null，不返回 token/摘要。IP 存储前脱敏，来源使用可信代理规则。所有对象按已验证 Cookie 的用户过滤，客户端 user_id 不参与查询；管理员 Cookie 不通用。PUT/POST 要求 application/json，所有写接口含无 body DELETE 均检查 Origin，写入繁忙沿用 503/Retry-After。
++
++CSV 每行：提交时间、练习类型、练习 ID、题号、模块、本人答案、正确 0/1、答案记录耗时。只导出本人已提交记录，不包含解析、草稿、密码、会话、密钥或其他账号；规范转义并防公式注入，超限不截断。
+ 
+ ## 查询与搜索（需要普通用户登录）
+ 
+@@ -95,6 +118,8 @@
+ 
+ v9 增加 option.content_with_text，v10 增加 label_call 及批次历史基线/完整性字段，v11 增加 practice_session.draft_revision；程序启动自动迁移，升级前备份。蒸馏费用未知时报告明确标记，不将缺失 usage 当作零消耗。
+ 
++v12 追加 user_profile（默认值回填、revision）、app_session 独立 public_id 与可空显示元数据，以及个人统计/活跃会话索引；不修改既有 token 摘要、密码和练习。完整恢复需使用同次 bundle 的数据库与有效密钥，升级/回滚见 [部署手册](deployment-2c4g.md)。
++
+ 考点按每题最后插入的一条标注 `MAX(label.id)` 聚合；不会因为同题参与多个历史批次而重复计数。稳定 ID 的唯一键为 `(module,name)`，已存在 ID 不重建。当前卡片从已有最新标注取参考内容，不是 P5 的完整质量审查与聚合晋级产物。
+ 
+ 启动网站自动刷新轻量考点映射；人工更新后可重算个人统计。全量蒸馏、完整聚合、向量检索和在线 AI 功能后置，本次没有执行这些任务。
+--- a/docs/deployment-2c4g.md
++++ b/docs/deployment-2c4g.md
+@@ -247,7 +247,7 @@
+ sudo install -o gk -g gk -m 600 /tmp/gk-secret.key /opt/gk/var/secret.key
+ ```
+ 
+-首次正式部署应从包含题库内容的快照开始。若线上数据库已存在，先用线上一致性备份，并把经过验证的数据库文件安装到该位置；不要上传空数据库覆盖线上数据。首次启动会自动执行到 v11 的追加数据库迁移、创建中文搜索索引并刷新已有考点映射，这一步可能比以后启动慢。
++首次正式部署应从包含题库内容的快照开始。若线上数据库已存在，先用线上一致性备份，并把经过验证的数据库文件安装到该位置；不要上传空数据库覆盖线上数据。首次启动会自动执行到 v12 的追加数据库迁移、创建中文搜索索引并刷新已有考点映射，这一步可能比以后启动慢。
+ 
+ ### 8.2 确认管理员账号
+ 
+@@ -385,6 +385,16 @@
+ 若程序升级后执行了数据库 schema 迁移，回滚时同时恢复升级前 SQLite 快照与旧二进制。不要仅把旧程序复制回来后直接搭配未知的新 schema 运行。
+ 
+ 本轮升级要求 Go 1.26.8 或更高安全补丁，自动执行 v9/v10/v11 迁移，新增选项 OCR 文本、用量账本及草稿版本锁，并恢复历史可知计数。草稿保存/交卷请求必须携带 `draft_revision`，前后端须同时升级，旧页面应刷新；并发冲突返回 409，不能自动以旧答案重试覆盖。历史缺失用量无法补算，报告会标记未知成本。密钥不存在但已有加密配置时会拒绝启动，必须恢复匹配密钥，不能以新生成密钥代替。
++
++### 12.4 个人中心 v12 升级
++
++新程序继续追加 v12：创建并回填 `user_profile` 默认资料/偏好/目标，追加 `app_session.public_id` 和可空设备/登录时间/脱敏 IP 元数据，以及个人统计和会话索引。旧昵称仍在 `app_user`，密码、token 摘要、练习、草稿 revision 与密钥不被改写。历史会话显示未知信息；个人资料版本独立于草稿版本。
++
++发布前在隔离副本运行新二进制，确认启动后迁移至 v12；用已有普通用户登录检查默认资料及原草稿，保存非默认偏好并刷新，确认看板、续做、CSV 和会话。生成完整 bundle，先执行 `backup --verify-bundle`，再复制快照与匹配密钥至新的恢复目录；恢复环境清理冲突 `GK_SECRET_KEY`，验证原 Cookie、资料 revision、提交记录及再次保存。禁止在原备份目录直接启动服务或执行迁移。
++
++升级线上服务仍按 12.3 停服务/保留旧程序/安装新包执行，不重建题库、不更换有效密钥；前端必须随新二进制更新，浏览器刷新。回滚使用升级前数据库快照、匹配密钥和旧二进制；v12 新增资料与会话显示数据可能不在升级前快照中，需明确回滚恢复点，不进行手写删表降级。
++
++本地 `make release` 包含个人中心使用说明和集成交付报告，不包含数据库、密钥、备份、测试 fixture 或题库图片。传包前列出 `tar -tzf var/gk-linux-amd64.tar.gz` 并计算 `sha256sum var/gk-linux-amd64.tar.gz`。本轮只完成本地隔离库迁移/恢复、Chrome 页面回归与跨平台编译；线上 HTTPS/实际代理、压力/长时间运行、Windows/macOS 原生运行及异机完整恢复须在目标环境执行。完整证据见 [Task4 报告](personal-center-task4-report.md)。
+ 
+ ## 13. 服务器网站验收后再做蒸馏
+ 
+--- a/docs/personal-center-progress.md
++++ b/docs/personal-center-progress.md
+@@ -7,7 +7,7 @@
+ | 1 迁移、资料、会话 | 已完成 | 15项定向、Go全量、相关包race/vet通过；独立规格/质量审查通过 |
+ | 2 看板、复习、导出 | 已完成 | R1/R2已红绿修复；独立复审通过，全量及相关race/vet通过 |
+ | 3 页面与图表 | 已完成 | R1正式红→绿且定向复审通过；4组乱序、原17组及旧6组回归通过 |
+-| 4 集成与交付 | 进行中 | Go全量/race/vet预检通过；继续迁移恢复/浏览器/编译/打包/终审 |
++| 4 集成与交付 | 待独立终审 | v11迁移/完整bundle恢复及原Cookie再次CAS通过；新增后全量/备份race/vet/npm/三平台编译通过；45组UI通过，Linux包内容/SHA已验 |
+ 
+ 起飞前接口核对：
+ 
+@@ -39,3 +39,5 @@
+ Task 3: fix round 1/5 — 唯一R1已按同owner最高确认revision统一接收，正式初始化GET红灯与四路径绿灯保存；原17+旧6通过，等待独立定向复审。报告末尾及task3-fix1-review.diff可追溯。
+ 
+ Task 3: complete — R1定向复审ADDRESSED，无修复新增破坏，规格及质量通过；Task1/2跨任务边界由已通过后端审查和Task4集成覆盖。Task3临时服务3833已正常关闭，退出0。
++
++Task 4: implementation ready, pending independent final review — docs/personal-center-task4-report.md；逐条覆盖矩阵 task4-coverage.md；task4-results.json 与 root-precheck 记录最新全量/恢复/race/vet/构建/45组真实UI；task4-package-manifest.json 记录Linux包18文件、无DB/密钥/备份/fixture及SHA。服务42574已正常关闭exit0，未提交/推送/部署。根代理安排唯一任务及宽范围终审，不将全部功能标记完成。
+--- a/cmd/gk/backup_restore_test.go
++++ b/cmd/gk/backup_restore_test.go
+@@ -1,14 +1,20 @@
+ package main
+ 
+ import (
++	"ai_analyze_guokao/internal/serve"
+ 	"ai_analyze_guokao/internal/setting"
+ 	"ai_analyze_guokao/internal/store"
+ 	"ai_analyze_guokao/internal/study"
+ 	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
+ 	"os"
+ 	"path/filepath"
++	"reflect"
+ 	"strings"
+ 	"testing"
++	"time"
+ )
+ 
+ func TestBackupRestorePreservesPracticeAndMatchedKey(t *testing.T) {
+@@ -82,3 +88,131 @@
+ 		t.Fatal("mismatched backup key accepted")
+ 	}
+ }
++
++// Complete v12 recovery must preserve preferences, the original login Cookie,
++// public session metadata and submitted records, then allow another CAS write.
++func TestPersonalBackupBundleRestoresProfileSessionAndCAS(t *testing.T) {
++	t.Setenv("GK_SECRET_KEY", "")
++	dir := t.TempDir()
++	source, key, bundle := filepath.Join(dir, "source.sqlite"), filepath.Join(dir, "source.key"), filepath.Join(dir, "bundle")
++	db, err := store.Open(source)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer db.Close()
++	ctx := context.Background()
++	settings, err := setting.Open(db, key)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err = settings.Set(ctx, setting.KeyAPIKey, "synthetic-personal-restore-key", "test"); err != nil {
++		t.Fatal(err)
++	}
++	s := &study.Service{DB: db}
++	u, err := s.Register(ctx, "personal_restore", "synthetic-password", "原昵称")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = db.Exec(`INSERT INTO question(id,content_hash,stem,answer,answer_type,option_count,module) VALUES(1,'personal-restore','题干','B','single',1,'资料分析'); INSERT INTO option(question_id,ord,label,content) VALUES(1,1,'B','选项')`); err != nil {
++		t.Fatal(err)
++	}
++	in := study.ProfileUpdate{Nickname: "恢复昵称", Bio: "非默认资料", AvatarID: 7, DailyQuestions: 50, DailyMinutes: 90, ExamName: "备考计划", ExamDate: time.Now().In(time.FixedZone("CST", 8*3600)).AddDate(1, 0, 0).Format("2006-01-02"), DefaultLimit: 50, DefaultModule: "资料分析", ReadingSize: 20}
++	profile, err := s.UpdateProfile(ctx, u.ID, in)
++	if err != nil {
++		t.Fatal(err)
++	}
++	in.Revision, in.Bio = profile.Revision, "第二版资料"
++	profile, err = s.UpdateProfile(ctx, u.ID, in)
++	if err != nil || profile.Revision != 2 {
++		t.Fatal("source profile CAS", profile, err)
++	}
++	token, _, err := s.LoginWithMetadata(ctx, u.Username, "synthetic-password", study.LoginMetadata{DeviceLabel: "Chrome / Linux", IP: "203.0.113.42"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	loginSessions, err := s.Sessions(ctx, u.ID, token, 1)
++	if err != nil || len(loginSessions.Items) != 1 {
++		t.Fatal("source sessions", loginSessions, err)
++	}
++	practice, err := s.CreateSession(ctx, u.ID, "single", study.Spec{QuestionIDs: []int64{1}})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = s.Submit(ctx, u.ID, practice.ID, []study.Answer{{QuestionID: 1, Answer: "B"}}, 0); err != nil {
++		t.Fatal(err)
++	}
++	if err = cmdBackup([]string{"--db", source, "--bundle", bundle, "--secret-key-file", key}); err != nil {
++		t.Fatal(err)
++	}
++	if err = cmdBackup([]string{"--verify-bundle", bundle}); err != nil {
++		t.Fatal(err)
++	}
++	// Restore a copy: verification and service startup never mutate the backup.
++	restoredPath := filepath.Join(dir, "restored.sqlite")
++	contents, err := os.ReadFile(filepath.Join(bundle, "gk.sqlite"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err = os.WriteFile(restoredPath, contents, 0600); err != nil {
++		t.Fatal(err)
++	}
++	restored, err := store.Open(restoredPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer restored.Close()
++	rs, err := setting.Open(restored, filepath.Join(bundle, "secret.key"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got, err := rs.Get(ctx, setting.KeyAPIKey); err != nil || got != "synthetic-personal-restore-key" {
++		t.Fatal("restored effective key", err)
++	}
++	recovered := &study.Service{DB: restored}
++	gotSessions, err := recovered.Sessions(ctx, u.ID, token, 1)
++	if err != nil || !reflect.DeepEqual(gotSessions, loginSessions) {
++		t.Fatal("public session metadata changed", err)
++	}
++	gotPractice, err := recovered.Session(ctx, u.ID, practice.ID)
++	if err != nil || gotPractice.SubmittedAt == "" || gotPractice.Correct != 1 || len(gotPractice.Answers) != 1 || gotPractice.Answers[0].Answer != "B" {
++		t.Fatal("submitted practice lost", gotPractice, err)
++	}
++	h := serve.New(rs, restored, nil).Routes()
++	request := func(method, path, body string) *httptest.ResponseRecorder {
++		r := httptest.NewRequest(method, "http://example.com"+path, strings.NewReader(body))
++		r.AddCookie(&http.Cookie{Name: "gk_user", Value: token})
++		if method == "PUT" {
++			r.Header.Set("Origin", "http://example.com")
++			r.Header.Set("Content-Type", "application/json")
++		}
++		w := httptest.NewRecorder()
++		h.ServeHTTP(w, r)
++		return w
++	}
++	w := request("GET", "/api/account/profile", "")
++	var gotProfile study.Profile
++	if err = json.Unmarshal(w.Body.Bytes(), &gotProfile); w.Code != 200 || err != nil || !reflect.DeepEqual(gotProfile, profile) {
++		t.Fatal("original Cookie/profile not restored", w.Code, w.Body.String(), err)
++	}
++	w = request("GET", "/api/auth/me", "")
++	var me study.User
++	if err = json.Unmarshal(w.Body.Bytes(), &me); w.Code != 200 || err != nil || me.ID != u.ID || me.Username != u.Username || me.Nickname != profile.Nickname {
++		t.Fatal("restored identity", w.Code, w.Body.String(), err)
++	}
++	in.Revision, in.Bio = profile.Revision, "恢复后再次更新"
++	body, err := json.Marshal(in)
++	if err != nil {
++		t.Fatal(err)
++	}
++	w = request("PUT", "/api/account/profile", string(body))
++	if err = json.Unmarshal(w.Body.Bytes(), &gotProfile); w.Code != 200 || err != nil || gotProfile.Revision != 3 || gotProfile.Bio != in.Bio || gotProfile.DefaultLimit != 50 || gotProfile.ReadingSize != 20 {
++		t.Fatal("post-restore CAS failed", w.Code, w.Body.String(), err)
++	}
++	w = request("PUT", "/api/account/profile", string(body))
++	if w.Code != 409 {
++		t.Fatal("post-restore stale CAS accepted", w.Code, w.Body.String())
++	}
++	if err = cmdBackup([]string{"--verify-bundle", bundle}); err != nil {
++		t.Fatal("restore mutated original bundle", err)
++	}
++}
+--- a/docs/personal-center.md
++++ b/docs/personal-center.md
+@@ -0,0 +1,38 @@
++# 个人中心
++
++普通考生登录后，从顶部资料入口或侧栏“个人中心”进入 `/account`。四个页签切换使用本地状态。资料、偏好和目标保存在本人账户，刷新或重新登录后恢复。
++
++| 页签 | 用法 |
++|---|---|
++| 学习总览 | 查看今日作答/分钟目标、考试倒计时、累计与期间统计、趋势、模块样本、90 日活动、连续练习和成就；期间可选 7/30/90 天 |
++| 复习助手 | 续做最近三份练习；按累计错数优先复练待订正自动错题；从有足够样本的模块/考点开始练习；进入收藏和历史记录 |
++| 资料与偏好 | 编辑昵称、简介、八种头像、目标、考试信息、默认题量/模块和练习字号；下载本人已提交 CSV |
++| 账户安全 | 用原密码改密；查看本人登录会话，确认撤销其他会话或退出其他设备；退出当前账户和重算统计 |
++
++资料用户名和注册日期只读，昵称/简介最多 40/200 字，考试名称最多 40 字。每日目标为 5–200 次及 5–180 分钟，默认 20 次/30 分钟。默认题量可选 10/20/50（初始 20），模块初始全部；题库 URL 中明确的筛选优先。字号 16/18/20px 仅作用于练习正文、选项和解析。退出或换账号清理客户端偏好。
++
++考试日期可为空；新日期必须是北京时间未来日期，最多五年后。已存日期到期后显示“已到/已过”，不会变为负倒计时或被自动删除，也可保留日期修改其他资料。目标进度最高显示 100%，实际超额数量仍显示。
++
++保存包含资料版本。其他窗口先保存时，本次收到 409 会保留输入；确认重新加载后再编辑保存。页面不会自动重发旧版本。成功保存同步顶部昵称/头像和偏好，同账号迟到的旧资料响应不会让已确认版本倒退。未保存输入离开页面、换页签或退出时有保护；保存等待中阻止重复保存和离开。400/409 不表示身份失效。
++
++## 统计口径
++
++- 时间固定为 Asia/Shanghai；7 天包含今天和前六天，30/90 同理。活动、趋势、今日目标均按提交日归属，跨午夜练习整体属于交卷当天。
++- 只有已提交练习计成果。非空答案计一次作答，同题复练按多次计算；空答案不计作答或正确。零分母正确率为空并显示“暂无作答”，不能当作 0%。
++- 完成练习数是提交会话数。总时长使用会话记录的 duration_ms，避免因答案 join 重复累加；它是客户端记录时长，不是在线停留或监考成绩。模块时长只汇总该模块有效答案耗时，跨模块会话的模块 session 数不能相加当总量。
++- 累计统计与选定期间分别展示。上期为紧邻等长区间；上期为零时显示绝对增量。活动日须至少有一次非空提交；今日未练而昨天练过时保留昨天结束的连续天数，最长连续依据全部历史。
++- 模块/考点少于五次显示样本不足，不参与薄弱建议。六个核心模块都有明确样本数，无记录不表示 0 分。建议最多三项；错题优先练习最多二十道，按错数、最近错时排序，仍使用原草稿和交卷协议。
++- 考点依据当前已有最新标签；覆盖率是期间已标注作答占比，不是全题库诊断。缺稳定映射的标签计覆盖但不生成无法练习的考点；可先做模块练习。手工订正不等于复练真实答对率。
++- 成就从本人记录实时计算：首次作答、累计 100/1,000 次、连续 7/30 天、六核心模块各五次，不提供排名、兑换或付费 AI。
++
++趋势次数与正确率分图表达；模块画像、学习日历、目标环均有数值摘要和可展开数据表。图表支持键盘查看值；日历用方向键/Home/End 查看具体日期，375px 下日历与数据表在自己的容器内滚动。无数据保持空状态，读取失败可重试。
++
++## 会话与导出
++
++活跃会话每页二十条，显示当前标识、设备类别、登录/到期时间和脱敏来源。旧会话缺信息显示未知；IP 在存储前脱敏（IPv4 前三段，IPv6 /48），不进行外部定位。撤销其他设备不会退出当前 Cookie；改密继续撤销全部旧会话。普通用户和管理员入口独立。
++
++CSV 可选 7/30/90 天或全部，默认三十天；带 UTF-8 BOM，列为提交时间、类型、练习 ID、题号、模块、本人答案、正确与记录耗时。规范转义并处理公式注入前缀；仅本人已提交记录（包括提交中的空答案），不含解析、草稿、凭据或其他用户数据。单次最多 5,000 行，超限整体拒绝并提示缩小范围。浏览器使用同源 Cookie 下载，不把凭据放入 URL。
++
++## 升级与验证
++
++v12 为追加迁移，回填旧账户默认资料和独立公开会话 ID，保留密码、登录摘要、草稿版本和历史提交。升级前生成并验证完整数据库与有效密钥 bundle，在副本验证新程序；回滚需恢复升级前数据库、匹配密钥与旧程序。步骤见 [部署手册](deployment-2c4g.md)，接口见 [API 文档](api-design.md)，本地集成证据与未测边界见 [Task4 记录](personal-center-task4-report.md)。
+--- a/docs/personal-center-task4-report.md
++++ b/docs/personal-center-task4-report.md
+@@ -0,0 +1,47 @@
++# 个人中心 Task4 集成与本地交付记录
++
++日期：2026-10-05。状态：实现验收及本地交付，待独立终审；Task1/2/3 独立审查及 Task3 R1 定向复审已通过，最终宽范围审查由主代理另行记录。未提交、推送或部署，未操作正式数据库、实际密钥或远程服务。本任务只修改验收测试、文档和 Makefile，不修改生产业务或前端。
++
++## 恢复验收与覆盖
++
++新增 `cmd/gk/backup_restore_test.go::TestPersonalBackupBundleRestoresProfileSessionAndCAS`，全部 fixture 在 `t.TempDir()`：创建合成普通用户、加密设置、模块题目及已提交练习；连续保存非默认头像/资料/目标/考试名称与日期/题量/模块/字号到 revision 2，创建带脱敏设备元数据的会话。通过真实 `cmdBackup --bundle` 和 `--verify-bundle` 生成/验证完整快照与有效密钥，再从 bundle 复制数据库到新恢复目录并打开。
++
++恢复后验证有效密钥能解密原设置、公开会话 ID/当前标识/设备/脱敏地址/登录到期信息原样保留、已提交练习/正确数/答案保留。通过恢复服务的实际 HTTP 路由和原始 `gk_user` Cookie GET `/auth/me` 与 `/account/profile` 验证身份及所有 Profile 字段与 revision 2；PUT 原版本成功得到 revision 3，再次提交旧版本为 409。恢复后的写入不会改变原 bundle，最后再次校验成功。请求经过真实 Cookie/Origin/JSON/requireUser 边界，使用 httptest Recorder，不需要监听公网或本地端口。此测试验收已有能力，未人为制造功能红灯、未改备份实现。
++
++原 `internal/store/personal_migration_test.go::TestPersonalMigrationFromV11PreservesSecretsAndDraft` 使用真实前十一条迁移创建 v11 临时库，含旧用户/会话/草稿，随后运行 v12，验证旧密码摘要/token/昵称/草稿与 draft_revision 保留、profile 默认回填、历史会话新公开 ID 和 NULL 元数据。本轮定向重跑通过；这不是直接修改 schema_version 来模拟旧结构，也不是正式大库升级。
++
++完整逐条覆盖矩阵见 [task4-coverage.md](../test-artifacts/personal-center/task4-coverage.md)，区分运行测试、源码审查和正式环境未测项。Task1/2 事务、时间、CSV/隔离和稀疏标签边界均在新增恢复测试后的 Go 全量中再次运行。
++
++## 实际验证
++
++命令/退出码及输出摘要保存在 [task4-results.json](../test-artifacts/personal-center/task4-results.json)，根代理预检和本轮浏览器命令在 [task4-root-precheck.json](../test-artifacts/personal-center/task4-root-precheck.json)。
++
++| 检查 | 命令/证据 | 结果 |
++|---|---|---|
++| v11迁移+完整bundle恢复 | `env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./cmd/gk ./internal/store -run 'TestPersonal(BackupBundle\|Migration)' -count=1 -v` | exit 0，两项通过 |
++| 新测试后Go全量 | `env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./... -count=1` | exit 0，全部包通过（serve 10.188s） |
++| 核心race | 根代理 `go test -race ./internal/serve ./internal/study ./internal/store ./internal/setting` | exit 0，无竞态报告；本任务未改生产Go，沿用同版证据，不重复150秒检查 |
++| 新增恢复相关race | `env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./cmd/gk -run 'Test(PersonalBackupBundle\|Backup)' -count=1` | exit 0，8.806s |
++| 静态检查 | `env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go vet ./...` | exit 0，无输出 |
++| 前端 | `cd web` 后 `npm run build` | exit 0，60 modules，1.60s；无新依赖安装 |
++| Linux/Windows/macOS amd64 | `CGO_ENABLED=0 GOOS=linux/windows/darwin GOARCH=amd64 go build -buildvcs=false -trimpath` | 三平台均exit 0，ELF/PE32+/Mach-O类型正确；Windows/macOS仅交叉编译 |
++| 原18+原6 | 根代理纯获批 `python3 test-artifacts/ui_regression.py` 与 `round2_fixes_ui.py`，参数为18083及隔离库 | exit 0，24组；原断言未放宽 |
++| 个人中心17+资料乱序4 | 根代理 `python3 test-artifacts/personal_center_regression.py`，原模式与 `--profile-ordering` | exit 0，21组 |
++
++四份本轮 UI 结果：[旧18](../test-artifacts/personal-center/task4-old18-results.json)、[旧6](../test-artifacts/personal-center/task4-old6-results.json)、[个人17](../test-artifacts/personal-center/task4-personal17-results.json)、[资料乱序4](../test-artifacts/personal-center/task4-ordering4-results.json)。总计45组。字段 `console_errors: []` 实际只监听 pageerror，表示未捕获页面异常为空；没有采集全部 console.error 或网络日志。截图由真实浏览器更新，包含桌面及375px四页签、有数据/空数据、长考试名称；根代理实际查看有数据桌面与移动总览。
++
++## 临时环境与执行边界
++
++本任务自行启动最新 `gk-task3`，使用 `_work/task3.sqlite` 和 `_work/task3-synthetic.key`、只读 data，监听 `127.0.0.1:18083`，工具会话 42574。管理员 `webtester/ui-test-password` 仅在隔离库创建，旧18按原测试改密至 `ui-test-password-next`。全部 UI 验收后本任务发送 Ctrl-C，显示“正在关闭”，退出 0；关闭前两条 context canceled 为浏览器取消请求日志。没有操作其他进程或正式服务。
++
++首次带重定向的旧18在沙箱内因 Chrome setsockopt 权限失败退出 1；升级重跑审批被中止，未得到测试结果，不计作产品失败或通过。根代理改用纯获批脚本前缀重跑并得到45组有效结果。本任务随后只在正常沙箱完成 Go/构建/文档操作，没有权限等待。原根服务 session 11444、Task3旧3833均已失效，不作为本轮启动证据。
++
++## 本地包与文档
++
++新增 [个人中心说明](personal-center.md)，更新 [API](api-design.md) 的八个新合同/CSV例外、[README](../README.md)入口、[部署手册](deployment-2c4g.md)的v12升级/回滚与未测边界、Makefile 发布文档列表。保留历史独立审查原始记录，不以本报告替代终审。
++
++本地 Linux 发布包为 `var/gk-linux-amd64.tar.gz`。前端已单独成功构建，随后 `env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 make -o web release` 复用该产物执行原release目标，不重复安装依赖。包校验18个文件，仅含嵌入前端的 Linux gk、deploy、taxonomy、README、修复记录和发布文档，无数据库/密钥/备份数据/测试fixture，包内文档逐字节与工作区相同；可重复执行的只读审计见 `test-artifacts/personal-center/task4-package-audit.py`。实际成员、每文件SHA、包SHA与检查退出码单独保存在 [task4-package-manifest.json](../test-artifacts/personal-center/task4-package-manifest.json) 和 results JSON。包内报告不包含自身包SHA，避免自引用；最终审查状态另记账本，不需要因此重打包。
++
++Task4 diff 从分派开始刷新后的27文件快照生成，见 [task4-review.diff](../test-artifacts/personal-center/task4-review.diff)；只包含本任务测试/文档/Makefile变化，不把之前未提交修复或Task3 R1修改算入。完整功能宽范围审查包由根代理生成并分派，账本只标“待终审”。
++
++未测正式环境边界：正式数据库/实际密钥升级，线上HTTPS/可信代理配置/压力/长时间运行，异机完整恢复，Windows/macOS原生运行、其他浏览器和真实屏幕阅读器。临时结构迁移、合成历史并发与bundle恢复不等于生产大库/线上性能验收；交叉编译不等于目标系统运行。本次无远程发布。
+--- a/test-artifacts/personal-center/task4-coverage.md
++++ b/test-artifacts/personal-center/task4-coverage.md
+@@ -0,0 +1,77 @@
++# 个人中心逐条规格覆盖矩阵
++
++对照 `docs/superpowers/specs/2026-10-04-personal-center-design.md`，日期 2026-10-05。这里区分测试与源码/独立审查，未将源码核对写成实际运行。后端 TestPersonal 均在最终 Go 全量中运行；UI 证据是根代理本轮独立执行的四份 Task4 JSON，共 45 组，全部 exit 0 / console_errors=[]。该字段只监听 pageerror，表示未捕获页面异常为空，不表示全部控制台或网络日志均无错误。
++
++缩写：P=`internal/serve/personal_profile_test.go`；D=`internal/serve/personal_dashboard_test.go`；A=`internal/study/personal_auth_test.go`；M=`internal/store/personal_migration_test.go`；B=`cmd/gk/backup_restore_test.go`；UI17/ORDER4/OLD18/OLD6 为对应 `task4-*-results.json`。UI 编号按 checks 数组从 1 开始。安全/事务结构核对另沿用 Task1/2/3 独立审查及本轮终审。
++
++| 规格条款 | 对应证据 | 结论/边界 |
++|---|---|---|
++| §1 工作台全部已确认范围；真实数据、持久化、可练推荐、原协议兼容 | UI17 1–17、OLD18/6；P/D/B | 已覆盖；无在线模型调用 |
++| §2 Go/Chi/SQLite、Vue/SVG/CSS；保留旧认证/草稿与六模块/稀疏标签 | Task1–3 diff/独立审查；D LatestLabelsAndResume；OLD6 | 已覆盖 |
++| §2/§11 临时库、真实 DB/密钥及远程服务边界 | t.TempDir 测试；_work 合成服务、正常关闭；Task4 报告 | 未操作正式环境 |
++| §3 /account、导航与顶部入口、四本地页签 | UI17 1、2；Account/App 源码审查 | 已覆盖 |
++| §3 加载/失败/重试/空状态 | UI17 1、7、9；Task3 审查 | 已覆盖 |
++| §3 dirty 换页签/路由/刷新保护、保存等待禁重复 | UI17 3、4、9 | 已覆盖 |
++| §3 409 保留输入、确认重载、禁止自动重发；同账号版本不倒退 | P ConcurrentCAS；UI17 4；ORDER4 全部 | 已覆盖 |
++| §3 鼠标/键盘图值、文字/表格、375px/日历局部滚动、非唯颜色 | UI17 5、6；图表独立审查、根桌面/移动截图检查 | 已覆盖 Chrome；未测真实读屏器 |
++| §4.1 用户名只读；昵称40、简介200 Unicode；八受控头像 | P RequiresCompleteEditableFields/DateAndUnicodeBoundaries；UI17 2 | 已覆盖；不接受 URL/HTML |
++| §4.1 注册日期、昵称/头像同步顶部；旧账户默认 | P DefaultsUpdateCAS；M；UI17 2；ORDER4 | 已覆盖 |
++| §4.1 无上传服务/新图片依赖 | Task1/3 源码与依赖检查 | 已覆盖源码范围 |
++| §4.2 题量10/20/50默认20；实际模块/全部；URL优先 | P RejectsInvalidAndUnauthorized；UI17 9、16；B | 已覆盖 |
++| §4.2 字号16/18/20仅正文；跨设备读取、登出/换人清缓存 | UI17 8、11、15–17；ORDER4 3；B | 已覆盖 |
++| §4.3 目标5–200/5–180默认20/30 | P DefaultsUpdateCAS/RejectsInvalidAndUnauthorized；UI17 2 | 已覆盖 |
++| §4.3 考试名称40、未来北京时间日期/五年、可空、已存到期保留 | P DateAndUnicodeBoundaries/PreservesOwnExpiredExamDate；UI17 14 | 已覆盖 |
++| §4.3 今日真实/剩余、进度最大100%、超额数；到期无负值/不删除 | UI17 6、14；GoalRing/Overview 独立审查 | 已覆盖源码与真实目标；超额主要源码核对 |
++| §4.4 原密码错误400、改密撤销所有旧会话 | OLD6 6；原认证 Go 测试；UI17 4 | 已覆盖 |
++| §4.4 当前标识/设备类别/登录到期/脱敏地址；旧信息未知 | P LoginMetadata/SessionsPaginationLegacyAndExpiry；A SessionClockAndControlledMetadata；UI17 12；B | 已覆盖 |
++| §4.4 可信clientIP，不信任伪造XFF；IPv4三段/IPv6 /48，无外部定位 | P LoginMetadata/LoginMetadataTrustedIPv6；A；Task1审查 | 已覆盖 |
++| §4.4 独立随机公开ID，无token/hash；固定20条分页 | M；P SessionsPaginationLegacyAndExpiry；UI17 12；B | 已覆盖 |
++| §4.4 仅本人其他会话撤销、他人404、当前走logout | P SessionsIsolationAndRevocation；UI17 11、12、15 | 已覆盖 |
++| §4.4 退出其他确认、保留当前Cookie、不新增凭据 | UI17 11；P SessionsIsolationAndRevocation | 已覆盖真实两Cookie |
++| §4.5 导出7/30/90/all默认30，八列本人提交记录 | D ExportLimitAndDates/ExportAndReviewHTTP；UI17 10 | 已覆盖 |
++| §4.5 排除密码/会话/密钥/解析/他人/草稿 | D ExportAndReviewHTTP；Task2独立审查 | 已覆盖 |
++| §4.5 BOM/Unicode/csv转义/公式前缀 | D ExportAndReviewHTTP；TestSafeCSVCellFormulaPrefixes；UI17 10 | 已覆盖 |
++| §4.5 5000成功、5001整体400不截断、固定文件名 | D ExportLimitAndDates；UI17 10 | 服务端真实边界；UI上限是明确故障注入 |
++| §5.1 timezone/start/end、自然日含今天、7/30/90 | D HTTPFixedClock/WindowBoundaries/ExportLimitAndDates | 已覆盖 |
++| §5.1 提交限定、非空次数、同题复练、零分母null | D HTTPFixedClock/ReviewSessionCompatibility/EmptyAndAllHistoryStreak | 已覆盖 |
++| §5.1 session完成数、时长先聚合不倍增、午夜归提交日 | D HTTPFixedClock/ReviewSessionCompatibility；UI17 6 | 已覆盖 |
++| §5.1 客户端时长非在线/监考；无答案正确率null、无活动为0 | 文档口径；D EmptyAndAllHistoryStreak；UI17 1 | 已覆盖 |
++| §5.1 累计/期间/等长前期，上期零用绝对增量 | D HTTPFixedClock/WindowBoundaries；Overview审查 | 已覆盖 |
++| §5.2 双小图分单位、范围/焦点值 | UI17 6、7；TrendChart审查 | 已覆盖 |
++| §5.2 六模块正确率/样本，无样本空缺/<5不足 | D WeakSuggestionsSampleThresholdAndLimit/HTTPFixedClock；UI17 1、6 | 已覆盖 |
++| §5.2 固定90日活动/记录时长；双目标环 | D HTTPFixedClock；UI17 1、6；ActivityCalendar/GoalRing审查 | 已覆盖 |
++| §5.2 原生独立Vue SVG/CSS，无图表依赖；name/摘要/表格 | Task3审查、package.json；UI17 6 | 已覆盖 |
++| §5.3 活动非空提交日；今天/昨天/断档/跨月、最长全历史 | D EmptyAndAllHistoryStreak/HTTPFixedClock | 已覆盖 |
++| §5.3 首答/100/1000/7/30/六模块各5成就及条件/进度 | D AchievementThresholds/EmptyAndAllHistoryStreak；UI17 6 | 已覆盖 |
++| §5.3 不允许客户端解锁，无去重题数误名/奖励排名 | 路由/Overview审查；D AchievementThresholds | 已覆盖源码 |
++| §6 最近3续做、题量/保存数、原session/draft版本、记录入口 | D LatestLabelsAndResume；UI17 8；OLD18/6 | 已覆盖 |
++| §6 本人auto待订正错数/最近错时排序、最多20；无题完成/400 | D ReviewMaxTwentyAndSecurity/ExportAndReviewHTTP；UI17 8；UI17 1 | 已覆盖 |
++| §6 薄弱模块至少5/最多3按准确率，不足说明 | D WeakSuggestionsSampleThresholdAndLimit；UI17 6、8 | 已覆盖 |
++| §6 实时latest标签、考点至少5/最多3，可创建练习；覆盖限制 | D LatestLabelsAndResume/WeakSuggestionsSampleThresholdAndLimit；UI17 8、13 | 已覆盖 |
++| §6 缺稳定映射计覆盖但不建议；NULL/空tertiary | D ReviewUnmappedEmptyTertiary；UI17 13 | 已覆盖 |
++| §6 收藏/待订正/历史，manual resolved不宣传真实答对 | D LatestLabelsAndResume/ReviewMaxTwentyAndSecurity；UI17 8；Task2/3审查 | 已覆盖 |
++| §6 透明规则，不冒充在线AI/调用付费模型 | Review页面/API/服务源码及测试调用范围 | 已覆盖源码范围 |
++| §7 v12仅追加、profile列/FK/昵称单源、默认回填/注册原子 | M；P DefaultsUpdateCAS/WriteAtomicity；A；Task1审查 | 已覆盖 |
++| §7 GET不隐式写profile；publicID唯一随机，旧token/expiry保留 | P DefaultsUpdateCAS；M；Task1审查 | 已覆盖 |
++| §7 统计/会话索引；业务/HTTP职责划分 | schema/profile/dashboard/sessions/export/account独立审查 | 已覆盖源码 |
++| §7 revision事务/昵称CAS，WriteTx；保持交卷原子/幂等 | P ConcurrentCAS/WriteAtomicity；D ReviewSessionCompatibility；B | 已覆盖 |
++| §7 明确ReadOnly短一致事务、按user/window、有界、无逐日N+1 | D ConcurrentHistoryAndCancellation；Task2审查 | 已覆盖；非生产压测 |
++| §7 无缓存/队列/后台聚合依赖，合成历史并发 | D ConcurrentHistoryAndCancellation；依赖/源码审查 | 已覆盖16组并发；生产吞吐未测 |
++| §8 八个新增路由均requireUser，methods/状态/DTO一致 | P/D HTTP测试；docs/api-design.md；Task1/2审查 | 已覆盖 |
++| §8 薄弱/续做复用现有practice；auth兼容/Login密码CAS | D ReviewSessionCompatibility；A LoginPreservesHashCAS；OLD6 | 已覆盖 |
++| §9 完全Cookie身份，管理员不混用；客户端user_id无效 | P RejectsInvalidAndUnauthorized；D ReviewMaxTwentyAndSecurity/ExportAndReviewHTTP | 已覆盖 |
++| §9 Origin/application/json、无body DELETE检查 | P SessionWriteRequestSecurity；D ReviewMaxTwentyAndSecurity | 已覆盖 |
++| §9 白名单/长度/枚举/Vue文本、受控CSS | P RequiresCompleteEditableFields/DateAndUnicodeBoundaries；Task3审查 | 已覆盖 |
++| §9 隔离和对象404一致；不改草稿/清库/全局setting | P/D；OLD6；Task1–3 diff与审查 | 已覆盖 |
++| §9 500异常，503/Retry-After；401专身份，400/409不误登出 | 原WriteTx/HTTP测试；UI17 3、4、9、15 | 已覆盖；UI故障注入边界明确 |
++| §9 空集合/null/default，无假成绩；图组件独立防整页失败 | D EmptyAndAllHistoryStreak；UI17 1；Task3组件审查 | 组件容错源码核对；未逐图注入运行错误 |
++| §9 改密/撤销让其他设备401，资料保存不撤销 | P SessionsIsolationAndRevocation/DefaultsUpdateCAS；UI17 4、11 | 已覆盖 |
++| §9 CSV同源Cookie/无token URL/固定名 | D ExportAndReviewHTTP；UI17 10；api.js审查 | 已覆盖 |
++| §9 v12备份/有效密钥/前后端新binary/副本迁移与bundle恢复 | M；B PersonalBackupBundleRestoresProfileSessionAndCAS；npm/构建/包清单 | 已覆盖隔离验收；正式迁移未执行 |
++| §10后端 全部验收九条 | 上述M/P/D/A/B及race/vet结果 | 已覆盖，性能为合成验收 |
++| §10页面 资料/偏好刷新、空图/范围/键盘/375/失败/徽章/推荐 | UI17全17；ORDER4全4 | 已覆盖Chrome |
++| §10页面 多页CAS/离开/撤销/错原密；原24回归 | UI17 4、9、11；OLD18+OLD6共24 | 全部exit0 |
++| §10交付 Go全量/race/vet/npm/Linux包；说明/API/验证记录 | task4-results.json、root-precheck、Task4报告、发布清单 | 本地验收；独立宽范围终审由根安排 |
++| §11 排除外部认证/上传/私信/支付/公共排名/付费AI；源码本地交付 | 本任务范围及Task1–3审查 | 未提交/推送/部署 |
++
++正式环境边界：未运行正式 DB/实际密钥迁移，未验线上 HTTPS/代理配置/压力/长时间运行/异机完整恢复，未验 Windows/macOS 原生运行、其他浏览器及真实读屏器。跨编译不等于原生运行；临时库恢复不等于生产大库恢复演练。最终独立终审状态由根代理另行记录，矩阵不替代终审。
+--- a/test-artifacts/personal-center/task4-package-audit.py
++++ b/test-artifacts/personal-center/task4-package-audit.py
+@@ -0,0 +1,34 @@
++"""Read-only local release audit; writes a manifest, never extracts or opens a DB."""
++import hashlib
++import json
++import tarfile
++from pathlib import Path
++
++root = Path(__file__).resolve().parents[2]
++archive = root / "var/gk-linux-amd64.tar.gz"
++allowed_roots = {"README.md", "第一轮修复文档.md", "第二轮修复文档.md", "第二轮上线就绪审查报告.md", "gk", "deploy", "taxonomy", "docs"}
++required = {"gk", "docs/personal-center.md", "docs/personal-center-task4-report.md", "docs/api-design.md", "docs/deployment-2c4g.md", "README.md"}
++files = {}
++with tarfile.open(archive, "r:gz") as tar:
++    for member in tar.getmembers():
++        path = Path(member.name)
++        assert not path.is_absolute() and ".." not in path.parts, member.name
++        assert path.parts[0] in allowed_roots, member.name
++        assert not ({"test-artifacts", "_work", "backups", "__pycache__", "tests"} & set(path.parts)), member.name
++        assert not member.name.endswith((".sqlite", ".sqlite-wal", ".sqlite-shm", ".db", ".key", ".env", ".py", "_test.go")), member.name
++        assert member.isfile() or member.isdir(), member.name
++        if member.isfile():
++            payload = tar.extractfile(member).read()
++            if member.name == "gk":
++                assert payload.startswith(b"\x7fELF"), "not a Linux ELF"
++                assert "个人中心".encode() in payload, "personal-center frontend not embedded"
++                expected = (root / "var/release/gk").read_bytes()
++            else:
++                expected = (root / member.name).read_bytes()
++            assert payload == expected, "package differs from current workspace: " + member.name
++            files[member.name] = {"size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
++assert required <= files.keys(), required - files.keys()
++result = {"archive": str(archive.relative_to(root)), "size": archive.stat().st_size, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "file_count": len(files), "files": files, "checks": {"allowed_members_only": True, "no_database_key_backup_or_fixture": True, "documents_match_workspace": True, "linux_elf_with_personal_frontend": True}, "note": "deploy/backup.sh and backup systemd templates are source configuration, not backup data."}
++destination = root / "test-artifacts/personal-center/task4-package-manifest.json"
++destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
++print(json.dumps({k: v for k, v in result.items() if k != "files"}, ensure_ascii=False, indent=2))

@@ -12,6 +12,7 @@ import (
 
 	"ai_analyze_guokao/internal/distill"
 	"ai_analyze_guokao/internal/llm"
+	"ai_analyze_guokao/internal/media"
 	"ai_analyze_guokao/internal/setting"
 	"ai_analyze_guokao/internal/store"
 )
@@ -87,6 +88,10 @@ func loadDistillCommon(dbFile, keyFile, taxPath, modelOverride string) (*distill
 	}
 	tax, err := distill.LoadTaxonomy(taxPath)
 	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := media.BackfillOptionText(context.Background(), db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -183,7 +188,7 @@ func cmdDistillPrompt(args []string) error {
 	if len(qs) > 0 {
 		q := qs[0]
 		in := distill.QuestionInput{
-			Module: q.Module, Tag: q.Tag, Stem: q.Stem, Answer: q.Answer,
+			Module: q.Module, Tag: q.Tag, Stem: q.Stem, Material: q.Material, Answer: q.Answer,
 			Explanation: q.Explanation, HasFigure: q.HasFigure,
 		}
 		for _, o := range q.Options {
@@ -314,6 +319,7 @@ func cmdDistillRun(args []string) error {
 	}
 
 	if len(models) == 1 {
+		opt.Model = models[0]
 		client := llm.New(c.baseURL, c.apiKey, c.timeout)
 		runner := distill.New(c.db, client, c.tax, opt)
 		fmt.Printf("\n开始蒸馏（模型 %s，并发 %d，单题最多尝试 %d 次，限流自动退避）…\n",
@@ -548,11 +554,12 @@ func printRunSummary(db *sql.DB, id string) error {
 		total, ok, failed                                      int
 		tin, tout                                              int
 		cost                                                   float64
+		usageComplete, costKnown                               int
 	)
 	err := db.QueryRow(`SELECT status, started_at, finished_at, model_config, model_response,
-		prompt_version, taxonomy_version, total, ok, failed, tokens_in, tokens_out, cost_usd
+		prompt_version, taxonomy_version, total, ok, failed, tokens_in, tokens_out, cost_usd,usage_complete,cost_known
 		FROM label_run WHERE id=?`, id).Scan(&status, &started, &finished, &modelCfg, &modelResp,
-		&pv, &tv, &total, &ok, &failed, &tin, &tout, &cost)
+		&pv, &tv, &total, &ok, &failed, &tin, &tout, &cost, &usageComplete, &costKnown)
 	if err != nil {
 		return err
 	}
@@ -562,7 +569,14 @@ func printRunSummary(db *sql.DB, id string) error {
 	fmt.Printf("模型        配置 %s / 回执 %s\n", modelCfg.String, orDash(modelResp.String))
 	fmt.Printf("版本        prompt %s / 规范表 %s\n", pv.String, tv.String)
 	fmt.Printf("token       输入 %d / 输出 %d\n", tin, tout)
-	fmt.Printf("花费        $%.4f\n", cost)
+	if costKnown == 1 {
+		fmt.Printf("花费        $%.4f\n", cost)
+	} else {
+		fmt.Printf("已知花费    $%.4f（总成本未知：价格或历史用量有缺口）\n", cost)
+	}
+	if usageComplete == 0 {
+		fmt.Println("用量提示    包含历史缺口或未获得用量的失败请求，仅为已知记录")
+	}
 	return nil
 }
 

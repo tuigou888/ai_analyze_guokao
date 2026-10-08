@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"strings"
-	"syscall"
 
 	"golang.org/x/term"
 )
@@ -15,7 +14,8 @@ import (
 // webAssets 返回内嵌的前端构建产物。
 //
 // 前端在 web/ 下构建，产物 web/dist 由嵌入指令打进二进制，因此交付仍是一个
-// 可执行文件（见 docs/架构方案.md §8.6）。目录不存在时返回 nil，
+// 可执行文件（见 docs/架构方案.md §8.6）。受版本管理的 .gitkeep 使无前端
+// 产物时仍可编译后端 CLI；缺少 index.html 时返回 nil，
 // 由 serve 层给提示页——这样在没装 Node 的机器上后端仍可单独跑起来。
 //
 //go:embed all:web_dist
@@ -36,8 +36,8 @@ func webAssets() fs.FS {
 // 不把密码放在命令行参数里是刻意的：那会被写进 shell 历史和进程列表。
 func readPassword(prompt string) (string, error) {
 	fmt.Print(prompt)
-	if term.IsTerminal(int(syscall.Stdin)) {
-		b, err := term.ReadPassword(int(syscall.Stdin))
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		b, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Println()
 		if err != nil {
 			return "", err

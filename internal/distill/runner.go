@@ -63,6 +63,8 @@ type Runner struct {
 	started  time.Time
 	inflight int       // 正在处理（含重试等待）的题数
 	lastDone time.Time // 最近一次出结果的时间，用于停滞告警
+	abort    context.CancelFunc
+	runErr   error
 }
 
 type failure struct {
@@ -111,21 +113,50 @@ func (r *Runner) Run(ctx context.Context) (*Stats, error) {
 //
 // manageRun 为真时由本方法登记/收尾 label_run（单执行器场景）；
 // 多执行器场景下由外部编排器统一登记，避免多个执行器互相覆盖批次状态。
-func (r *Runner) RunOn(ctx context.Context, questions []store.DistillQuestion, manageRun bool) (*Stats, error) {
+func (r *Runner) RunOn(ctx context.Context, questions []store.DistillQuestion, manageRun bool) (result *Stats, retErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if manageRun {
+		release, err := acquireRunLock(ctx, r.db, r.opt.RunID)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	if err := ensureRunVersions(ctx, r.db, r.opt.RunID, r.tax); err != nil {
+		return nil, err
+	}
+	if manageRun {
+		if err := r.registerRun(ctx, questions); err != nil {
+			return nil, err
+		}
+		defer func() {
+			endCtx, c := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer c()
+			var batch *BatchError
+			retErr = errors.Join(retErr, finishStoredRun(endCtx, r.db, r.opt.RunID, retErr != nil && !errors.As(retErr, &batch)))
+		}()
+	}
 	// 目录必须在这里建，不能只在 Run 里建：多模型路径直接调 RunOn 而不经过 Run，
 	// 少了这一步，每个执行器都会因"manifest.json: no such file or directory"瞬间失败。
 	if err := os.MkdirAll(r.dir, 0o755); err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
+	startFailed := r.stats.Failed
+	r.abort = cancel
+	r.runErr = nil
 	r.stats.Model = r.opt.Model
 	r.started = time.Now()
 	r.lastDone = time.Now()
+	r.mu.Unlock()
 
 	// 长跑批次没有进度输出，卡住时完全看不出它在干什么——所以每题一行日志，
 	// 外加一个"多久没出结果"的停滞告警（含在途题数，用于判断是卡死还是只是慢）。
 	stopTicker := make(chan struct{})
-	defer close(stopTicker)
-	go r.watchProgress(stopTicker, len(questions))
+	tickerDone := make(chan struct{})
+	defer func() { close(stopTicker); <-tickerDone }()
+	go func() { defer close(tickerDone); r.watchProgress(stopTicker, len(questions)) }()
 
 	done, err := r.alreadyDone(ctx)
 	if err != nil {
@@ -145,6 +176,7 @@ func (r *Runner) RunOn(ctx context.Context, questions []store.DistillQuestion, m
 	}
 
 	pending := make([]store.DistillQuestion, 0, len(questions))
+	r.mu.Lock()
 	for _, q := range questions {
 		if done[q.ID] {
 			r.stats.Skipped++
@@ -155,12 +187,7 @@ func (r *Runner) RunOn(ctx context.Context, questions []store.DistillQuestion, m
 	// 用累加而不是覆盖：多引擎路径会对每个桶各调一次 RunOn，
 	// 覆盖会让汇总里的 Total 只剩最后一个桶的大小，出现"成功 24/10"这种错乱。
 	r.stats.Total += len(questions)
-
-	if manageRun {
-		if err := r.registerRun(ctx, len(questions)); err != nil {
-			return nil, err
-		}
-	}
+	r.mu.Unlock()
 
 	start := time.Now()
 	outFile := filepath.Join(r.dir, "output.jsonl")
@@ -188,8 +215,13 @@ func (r *Runner) RunOn(ctx context.Context, questions []store.DistillQuestion, m
 			}
 		}()
 	}
+feeding:
 	for _, q := range pending {
-		jobs <- q
+		select {
+		case <-ctx.Done():
+			break feeding
+		case jobs <- q:
+		}
 	}
 	close(jobs)
 	wg.Wait()
@@ -198,21 +230,28 @@ func (r *Runner) RunOn(ctx context.Context, questions []store.DistillQuestion, m
 
 	// 失败清单：区分可重试与不可重试，便于决定是重跑还是改配置（§3.5）。
 	if len(r.failures) > 0 {
-		_ = writeJSONL(filepath.Join(r.dir, "failures.jsonl"), r.failures)
-	}
-	if manageRun {
-		if err := r.finishRun(ctx); err != nil {
-			return nil, err
+		if err := writeJSONL(filepath.Join(r.dir, "failures.jsonl"), r.failures); err != nil {
+			r.infrastructureFailure(err)
 		}
 	}
 	sort.Strings(r.stats.NovelConcepts)
+	if r.runErr != nil {
+		return &r.stats, r.runErr
+	}
+	if ctx.Err() != nil {
+		return &r.stats, ctx.Err()
+	}
+	if r.stats.Failed > startFailed {
+		return &r.stats, &BatchError{Failed: r.stats.Failed - startFailed}
+	}
 	return &r.stats, nil
 }
 
 // processOne 处理一道题：调用 → 解析 → 校验 → 不合格重试 → 落库落盘。
 func (r *Runner) processOne(ctx context.Context, q store.DistillQuestion, sysPrompt string, out *os.File) {
+	defer func() { r.mu.Lock(); r.inflight--; r.lastDone = time.Now(); r.mu.Unlock() }()
 	in := QuestionInput{
-		Module: q.Module, Tag: q.Tag, Stem: q.Stem,
+		Module: q.Module, Tag: q.Tag, Stem: q.Stem, Material: q.Material,
 		Answer: q.Answer, AnswerType: model.AnswerType(q.AnswerType),
 		Explanation: q.Explanation, HasFigure: q.HasFigure,
 	}
@@ -245,8 +284,37 @@ func (r *Runner) processOne(ctx context.Context, q store.DistillQuestion, sysPro
 			MaxTokens:   maxTokens,
 			JSONMode:    true,
 		})
+		var callID int64
+		if resp != nil {
+			var usageErr error
+			callID, usageErr = r.recordUsage(ctx, q, resp)
+			if usageErr != nil {
+				r.mu.Lock()
+				r.stats.Failed++
+				r.failures = append(r.failures, failure{QuestionID: q.ID, Error: usageErr.Error()})
+				r.mu.Unlock()
+				r.infrastructureFailure(usageErr)
+				return
+			}
+		}
 		if err != nil {
+			if callID != 0 {
+				if markErr := r.setCallStatus(ctx, callID, "invalid"); markErr != nil {
+					r.infrastructureFailure(markErr)
+				}
+			}
+			if resp == nil {
+				unknownCtx, c := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				_, markErr := r.db.ExecContext(unknownCtx, `UPDATE label_run SET usage_complete=0 WHERE id=?`, r.opt.RunID)
+				c()
+				if markErr != nil {
+					r.infrastructureFailure(markErr)
+				}
+			}
 			lastErr, lastClass = err, isRetryable(err)
+			if ctx.Err() != nil {
+				break
+			}
 			if !lastClass {
 				break
 			}
@@ -258,6 +326,10 @@ func (r *Runner) processOne(ctx context.Context, q store.DistillQuestion, sysPro
 
 		label, perr := ParseLabel(resp.Content)
 		if perr != nil {
+			if err := r.setCallStatus(ctx, callID, "invalid"); err != nil {
+				r.infrastructureFailure(err)
+				return
+			}
 			lastErr, lastClass = perr, true
 			// JSON 不合格不是限流问题，固定短延迟即可，还带上了错误反馈供模型修正。
 			r.sleep(ctx, time.Second)
@@ -267,13 +339,24 @@ func (r *Runner) processOne(ctx context.Context, q store.DistillQuestion, sysPro
 		v := &Validation{}
 		v.Validate(label, r.tax, q.Module, q.Answer)
 		if v.FatalCount() > 0 {
+			if err := r.setCallStatus(ctx, callID, "invalid"); err != nil {
+				r.infrastructureFailure(err)
+				return
+			}
 			lastErr = fmt.Errorf("字段校验失败: %s", strings.Join(v.FatalMessages(), "; "))
 			lastClass = true
 			r.sleep(ctx, time.Second)
 			continue
 		}
 
-		r.record(ctx, q, label, v, resp, out)
+		status := "accepted"
+		if err := r.record(ctx, q, label, v, resp, out); err != nil {
+			status = "save_error"
+			r.infrastructureFailure(err)
+		}
+		if err := r.setCallStatus(ctx, callID, status); err != nil {
+			r.infrastructureFailure(err)
+		}
 		return
 	}
 
@@ -282,7 +365,6 @@ func (r *Runner) processOne(ctx context.Context, q store.DistillQuestion, sysPro
 	r.mu.Lock()
 	r.stats.Failed++
 	r.lastDone = time.Now()
-	r.inflight--
 	done, total := r.stats.OK+r.stats.Failed+r.stats.Skipped, r.stats.Total
 	r.failures = append(r.failures, failure{
 		QuestionID: q.ID, Error: truncate(errString(lastErr), 400), Retryable: lastClass,
@@ -324,13 +406,9 @@ func (r *Runner) watchProgress(stop <-chan struct{}, total int) {
 
 // record 保存一次合格的产出。
 func (r *Runner) record(ctx context.Context, q store.DistillQuestion, l *Label,
-	v *Validation, resp *llm.Response, out *os.File) {
+	v *Validation, resp *llm.Response, out *os.File) error {
 
 	tokensIn, tokensOut := resp.TokensIn, resp.TokensOut
-	cost := 0.0
-	if r.opt.HasPricing {
-		cost = r.opt.Pricing.Cost(tokensIn, tokensOut)
-	}
 
 	row := labelRow(l)
 	_, err := r.db.ExecContext(ctx, `
@@ -349,19 +427,15 @@ func (r *Runner) record(ctx context.Context, q store.DistillQuestion, l *Label,
 		r.stats.Failed++
 		r.failures = append(r.failures, failure{QuestionID: q.ID,
 			Error: "写库失败（不可重试）: " + err.Error(), Retryable: false})
-		return
+		return fmt.Errorf("保存标注失败: %w", err)
 	}
 
 	r.stats.OK++
-	r.stats.TokensIn += tokensIn
-	r.stats.TokensOut += tokensOut
 	r.lastDone = time.Now()
-	r.inflight--
 	done := r.stats.OK + r.stats.Failed + r.stats.Skipped
 	fmt.Fprintf(os.Stderr, "[%s] ✓ 题 %d（%s）%s/%s  %d+%d token  %.1fs  进度 %d/%d\n",
 		r.opt.Model, q.ID, q.Module, l.Subject, l.Tertiary,
 		tokensIn, tokensOut, resp.Latency.Seconds(), done, r.stats.Total)
-	r.stats.CostUSD += cost
 	r.stats.NovelConcepts = append(r.stats.NovelConcepts, v.NovelConcepts...)
 	if strings.TrimSpace(l.Doubt) != "" {
 		r.stats.DoubtRate++
@@ -375,7 +449,7 @@ func (r *Runner) record(ctx context.Context, q store.DistillQuestion, l *Label,
 
 	// 盘上留一份审计凭据。写盘失败只降级告警，绝不上抛（§3.5：catch 里再抛会杀死整批）。
 	rec := map[string]any{
-		"question_id": q.ID, "module": q.Module, "run_id": r.opt.RunID,
+		"question_id": q.ID, "module": q.Module, "run_id": r.opt.RunID, "occurrence_id": q.OccurrenceID, "material_id": q.MaterialID,
 		"model_config": r.opt.Model, "model_response": resp.Model,
 		"prompt_version": PromptVersion, "taxonomy_version": r.tax.Version,
 		"tokens_in": tokensIn, "tokens_out": tokensOut,
@@ -385,8 +459,9 @@ func (r *Runner) record(ctx context.Context, q store.DistillQuestion, l *Label,
 	}
 	b, _ := json.Marshal(rec)
 	if _, werr := out.Write(append(b, '\n')); werr != nil {
-		fmt.Fprintf(os.Stderr, "[warn] output.jsonl 写入失败（不影响入库）: %v\n", werr)
+		return fmt.Errorf("审计输出写入失败（标注已保存）: %w", werr)
 	}
+	return nil
 }
 
 type labelJSON struct {
@@ -516,36 +591,9 @@ func (r *Runner) alreadyDone(ctx context.Context) (map[int64]bool, error) {
 	return done, rows.Err()
 }
 
-func (r *Runner) registerRun(ctx context.Context, total int) error {
+func (r *Runner) registerRun(ctx context.Context, questions []store.DistillQuestion) error {
 	scope, _ := json.Marshal(map[string]any{"module": r.opt.Module, "limit": r.opt.Limit, "seed": r.opt.Seed})
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO label_run(id, scope, prompt_version, taxonomy_version, model_config,
-			base_url, status, started_at, total)
-		VALUES (?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET status='running', total=excluded.total`,
-		r.opt.RunID, string(scope), PromptVersion, r.tax.Version, r.opt.Model,
-		r.opt.BaseURL, "running", time.Now().Format(time.RFC3339), total)
-	return err
-}
-
-func (r *Runner) finishRun(ctx context.Context) error {
-	status := "finished"
-	if r.stats.Failed > 0 && r.stats.OK == 0 {
-		status = "failed"
-	}
-	modelResp := r.stats.ModelResponse
-	// 配置名与回执名不一致时必须留下痕迹：配置名只能证明我们请求了什么（§3.7）。
-	if modelResp != "" && modelResp != r.opt.Model {
-		fmt.Fprintf(os.Stderr, "[warn] 模型名不一致：配置 %q，回执 %q——请确认网关路由与计费口径\n",
-			r.opt.Model, modelResp)
-	}
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE label_run SET status=?, finished_at=?, ok=?, failed=?,
-			tokens_in=?, tokens_out=?, cost_usd=?, model_response=?
-		WHERE id=?`,
-		status, time.Now().Format(time.RFC3339), r.stats.OK, r.stats.Failed,
-		r.stats.TokensIn, r.stats.TokensOut, r.stats.CostUSD, modelResp, r.opt.RunID)
-	return err
+	return prepareStoredRun(ctx, r.db, r.opt, r.tax, questions, string(scope))
 }
 
 func writeJSON(path string, v any) error {

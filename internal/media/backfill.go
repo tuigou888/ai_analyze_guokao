@@ -19,6 +19,7 @@ type BackfillStats struct {
 	// 题面与材料里的题目图（走文本识别，为资料分析找回表格数据）
 	StemsFilled     int // 写出 stem_with_text 的题数
 	MaterialsFilled int // 写出 body_with_text 的材料数
+	OptionsFilled   int
 	FiguresReplaced int // 替换成功的题面图占位符数
 	FiguresNoText   int // 识别成功但图里确实没有文字（纯图形，属正常结果）
 	FiguresMissing  int // 尚未识别或识别失败的题面图数（真正的缺口）
@@ -46,7 +47,7 @@ func Backfill(ctx context.Context, db *sql.DB) (*BackfillStats, error) {
 	}
 	st := &BackfillStats{}
 	for _, task := range []func(context.Context, *sql.DB, *ocrStore, *BackfillStats) error{
-		backfillExplanations, backfillStems, backfillMaterials,
+		backfillExplanations, backfillStems, backfillMaterials, backfillOptions,
 	} {
 		if err := task(ctx, db, ocr, st); err != nil {
 			return nil, err
@@ -178,6 +179,22 @@ func backfillStems(ctx context.Context, db *sql.DB, ocr *ocrStore, st *BackfillS
 			return true, []any{out, c.figureMissing + c.formulaMissing, id}
 		},
 		`UPDATE question SET stem_with_text=?, figure_missing=? WHERE id=?`)
+}
+
+// BackfillOptionText upgrades existing OCR results for the new option input path.
+func BackfillOptionText(ctx context.Context, db *sql.DB) error {
+	ocr, err := loadOCR(ctx, db)
+	if err != nil {
+		return err
+	}
+	return backfillOptions(ctx, db, ocr, &BackfillStats{})
+}
+func backfillOptions(ctx context.Context, db *sql.DB, ocr *ocrStore, st *BackfillStats) error {
+	return eachRow(ctx, db, `SELECT id,COALESCE(content,'') FROM option WHERE content LIKE '%`+PlaceholderOpen+`%'`, func(id int64, text string) (bool, []any) {
+		out, _ := ocr.resolve(text)
+		st.OptionsFilled++
+		return true, []any{out, id}
+	}, `UPDATE option SET content_with_text=? WHERE id=?`)
 }
 
 func backfillMaterials(ctx context.Context, db *sql.DB, ocr *ocrStore, st *BackfillStats) error {

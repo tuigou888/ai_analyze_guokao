@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
-import { auth } from '../auth'
+import { auth, setUser } from '../auth'
 const route = useRoute(), router = useRouter()
 const admin = computed(() => !!route.meta.admin), register = ref(false)
 const username = ref(''), password = ref(''), nickname = ref(''), busy = ref(false), error = ref('')
@@ -11,7 +11,7 @@ async function submit() {
   try {
     if (register.value && !admin.value) await api.register({ username: username.value, password: password.value, nickname: nickname.value })
     if (admin.value) auth.admin = await api.login(username.value, password.value)
-    else auth.user = await api.userLogin(username.value,password.value)
+    else setUser(await api.userLogin(username.value,password.value), { announce: true })
     const to = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : admin.value ? '/admin' : '/questions'
     await router.replace(to)
   } catch(e) { error.value=e.message } finally { busy.value=false }

@@ -2,14 +2,15 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, query } from '../api'
+import { auth } from '../auth'
 import Filters from '../components/Filters.vue'
 import Pagination from '../components/Pagination.vue'
 import QuestionRows from '../components/QuestionRows.vue'
 const route=useRoute(),router=useRouter()
-const filters=ref({module:'',year:'',region:'',exam_type:'',variant:'',q:'',...route.query})
-const data=ref({items:[],total:0}),busy=ref(false),starting=ref(false),error=ref(''),page=ref(Number(route.query.page)||1),count=ref(20)
+const filters=ref({module:Object.hasOwn(route.query,'module') ? route.query.module : auth.profile?.default_module || '',year:'',region:'',exam_type:'',variant:'',q:'',...route.query})
+const data=ref({items:[],total:0}),busy=ref(false),starting=ref(false),error=ref(''),page=ref(Number(route.query.page)||1),count=ref([10,20,50].includes(Number(route.query.limit)) ? Number(route.query.limit) : auth.profile?.default_limit || 20)
 async function load(p=1){busy.value=true;error.value='';page.value=p;try{data.value=await api.questions({...filters.value,page:p,size:20})}catch(e){error.value=e.message}finally{busy.value=false}}
-async function apply(){await router.replace(`/questions?${query({...filters.value,page:1})}`);await load()}
+async function apply(){const values=new URLSearchParams(query({...filters.value,page:1}));values.set('module',filters.value.module||'');await router.replace(`/questions?${values}`);await load()}
 async function start(id){starting.value=true;error.value='';try{const s=await api.createSession('single',id ? {question_ids:[id]} : {...filters.value,limit:count.value});await router.push(`/practice?session=${s.session_id}`)}catch(e){error.value=e.message}finally{starting.value=false}}
 onMounted(()=>load(page.value))
 </script>

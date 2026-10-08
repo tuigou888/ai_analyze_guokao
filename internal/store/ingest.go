@@ -51,13 +51,14 @@ func prepare(db *sql.DB) (*stmts, error) {
 	s := &stmts{}
 	var err error
 	if s.paper, err = db.Prepare(`
-		INSERT INTO paper(name, region, year, module, exam_type, paper_variant,
+		INSERT OR IGNORE INTO paper(name, region, year, module, exam_type, paper_variant,
 		                  declared_count, question_count, source_path)
 		VALUES (?,?,?,?,?,?,?,?,?)`); err != nil {
 		return nil, err
 	}
 	if s.material, err = db.Prepare(`
-		INSERT INTO material(paper_id, seq, body, body_html, has_figure) VALUES (?,?,?,?,?)`); err != nil {
+		INSERT INTO material(paper_id, seq, body, body_html, has_figure) VALUES (?,?,?,?,?)
+		ON CONFLICT(paper_id,seq) DO NOTHING`); err != nil {
 		return nil, err
 	}
 	if s.question, err = db.Prepare(`
@@ -76,7 +77,7 @@ func prepare(db *sql.DB) (*stmts, error) {
 		return nil, err
 	}
 	if s.option, err = db.Prepare(`
-		INSERT OR IGNORE INTO option(question_id, ord, label, content, content_html, is_correct)
+		INSERT OR REPLACE INTO option(question_id, ord, label, content, content_html, is_correct)
 		VALUES (?,?,?,?,?,?)`); err != nil {
 		return nil, err
 	}
@@ -123,7 +124,14 @@ func (g *Ingester) File(f *ingest.File) (newEntities, occurrences int, err error
 	if err != nil {
 		return 0, 0, fmt.Errorf("写入 paper %s: %w", f.Paper.SourcePath, err)
 	}
-	paperID, _ := res.LastInsertId()
+	paperAdded, err := res.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+	var paperID int64
+	if err := tx.QueryRow(`SELECT id FROM paper WHERE source_path=?`, f.Paper.SourcePath).Scan(&paperID); err != nil {
+		return 0, 0, err
+	}
 
 	// materials
 	materialIDs := make(map[int]int64, len(f.Materials))
@@ -132,18 +140,29 @@ func (g *Ingester) File(f *ingest.File) (newEntities, occurrences int, err error
 		if err != nil {
 			return 0, 0, err
 		}
-		id, _ := r.LastInsertId()
+		var id int64
+		var body, html sql.NullString
+		if err := tx.QueryRow(`SELECT id,body,body_html FROM material WHERE paper_id=? AND seq=?`, paperID, m.Seq).Scan(&id, &body, &html); err != nil {
+			return 0, 0, err
+		}
+		if body.String != m.Body || html.String != m.BodyHTML {
+			return 0, 0, fmt.Errorf("材料内容冲突 %s#%d；请在新数据库中重建", f.Paper.SourcePath, m.Seq)
+		}
 		materialIDs[m.Seq] = id
+		added, err := r.RowsAffected()
+		if err != nil {
+			return 0, 0, err
+		}
+		if added > 0 {
+			if err := insertImages(txImage, m.Images); err != nil {
+				return 0, 0, err
+			}
+		}
 	}
 
 	// 材料里的图片也必须登记。资料分析的材料表格/图表只出现在材料正文里，
 	// 早期版本漏登记它们，导致这批图没有 sha256、拿不到 OCR 结果，
 	// 材料表格回填率因此是 0。
-	for _, m := range f.Materials {
-		if err := insertImages(txImage, m.Images); err != nil {
-			return 0, 0, err
-		}
-	}
 
 	for i := range f.Questions {
 		q := &f.Questions[i]
@@ -173,13 +192,34 @@ func (g *Ingester) File(f *ingest.File) (newEntities, occurrences int, err error
 
 		var materialID any
 		if q.MaterialSeq > 0 {
-			materialID = materialIDs[q.MaterialSeq]
+			mid, ok := materialIDs[q.MaterialSeq]
+			if !ok {
+				return 0, 0, fmt.Errorf("材料不存在 %s#%d", f.Paper.SourcePath, q.MaterialSeq)
+			}
+			materialID = mid
 		}
-		if _, err := txOccurrence.Exec(questionID, paperID, materialID,
-			q.Number, nullStr(q.QID), nullStr(q.Tag), b2i(q.MaterialSeq > 0)); err != nil {
+		result, err := txOccurrence.Exec(questionID, paperID, materialID,
+			q.Number, nullStr(q.QID), nullStr(q.Tag), b2i(q.MaterialSeq > 0))
+		if err != nil {
 			return 0, 0, err
 		}
-		occurrences++
+		added, err := result.RowsAffected()
+		if err != nil {
+			return 0, 0, err
+		}
+		if added == 0 {
+			var existingQ int64
+			var existingM sql.NullInt64
+			var rawQID, tag sql.NullString
+			if err := tx.QueryRow(`SELECT question_id,material_id,raw_qid,raw_tag FROM question_occurrence WHERE paper_id=? AND number=?`, paperID, q.Number).Scan(&existingQ, &existingM, &rawQID, &tag); err != nil {
+				return 0, 0, err
+			}
+			if existingQ != questionID || existingM.Valid != (q.MaterialSeq > 0) || existingM.Valid && existingM.Int64 != materialIDs[q.MaterialSeq] || rawQID.String != q.QID || tag.String != q.Tag {
+				return 0, 0, fmt.Errorf("题目归属冲突 %s#%d；请在新数据库中重建", f.Paper.SourcePath, q.Number)
+			}
+			continue
+		}
+		occurrences += int(added)
 
 		if err := insertImages(txImage, q.Images); err != nil {
 			return 0, 0, err
@@ -187,6 +227,9 @@ func (g *Ingester) File(f *ingest.File) (newEntities, occurrences int, err error
 	}
 
 	for _, w := range f.Warnings {
+		if paperAdded == 0 && occurrences == 0 {
+			break
+		}
 		if _, err := txWarning.Exec(w.SourcePath, w.Line, w.Kind, w.Detail); err != nil {
 			return 0, 0, err
 		}

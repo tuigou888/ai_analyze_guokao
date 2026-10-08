@@ -1,0 +1,40 @@
+{
+  "checks": [],
+  "console_errors": [],
+  "shared_cookie": {
+    "a_revision": 0,
+    "b_before": {
+      "username": "personal_1791244847705689574_b",
+      "nickname": "",
+      "bio": "",
+      "avatar_id": 0,
+      "created_at": "2026-10-06T00:00:48Z",
+      "updated_at": "2026-10-06T00:00:48Z",
+      "daily_questions": 20,
+      "daily_minutes": 30,
+      "exam_name": "",
+      "exam_date": "",
+      "default_limit": 20,
+      "default_module": "",
+      "reading_size": 16,
+      "revision": 0
+    },
+    "b_after": {
+      "username": "personal_1791244847705689574_b",
+      "nickname": "A跨标签未保存输入",
+      "bio": "",
+      "avatar_id": 0,
+      "created_at": "2026-10-06T00:00:48Z",
+      "updated_at": "2026-10-06T00:00:50Z",
+      "daily_questions": 20,
+      "daily_minutes": 30,
+      "exam_name": "",
+      "exam_date": "",
+      "default_limit": 20,
+      "default_module": "",
+      "reading_size": 16,
+      "revision": 1
+    },
+    "b_polluted": true
+  }
+}

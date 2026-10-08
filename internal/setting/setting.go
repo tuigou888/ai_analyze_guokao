@@ -67,25 +67,69 @@ type Store struct {
 // 不把密钥硬编码在代码里：那等于没有加密。也不强制要求 env，否则首次启动
 // 会直接起不来——对自部署的产品，落一份 0600 的本地密钥是务实的折中。
 func Open(db *sql.DB, keyFile string) (*Store, error) {
-	key, err := loadKey(keyFile)
+	key, err := loadKey(db, keyFile)
 	if err != nil {
 		return nil, err
 	}
-	return &Store{db: db, key: key}, nil
+	s := &Store{db: db, key: key}
+	if err := validateKey(db, key); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
-func loadKey(keyFile string) ([]byte, error) {
+func validateKey(db *sql.DB, key []byte) error {
+	s := &Store{db: db, key: key}
+	rows, err := db.Query(`SELECT value_secret FROM setting WHERE is_secret=1 AND length(value_secret)>0`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var blob []byte
+		if err = rows.Scan(&blob); err != nil {
+			return err
+		}
+		if _, err = s.decrypt(blob); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func environmentKey() []byte {
 	if env := strings.TrimSpace(os.Getenv("GK_SECRET_KEY")); env != "" {
 		if b, err := hex.DecodeString(env); err == nil && len(b) == 32 {
-			return b, nil
+			return b
 		}
-		sum := sha256.Sum256([]byte(env)) // 允许任意口令
-		return sum[:], nil
+		sum := sha256.Sum256([]byte(env))
+		return sum[:]
+	}
+	return nil
+}
+
+func loadKey(db *sql.DB, keyFile string) ([]byte, error) {
+	if key := environmentKey(); key != nil {
+		return key, nil
+	}
+	decodeKey := func(b []byte) ([]byte, error) {
+		k, e := hex.DecodeString(strings.TrimSpace(string(b)))
+		if e != nil || len(k) != 32 {
+			return nil, fmt.Errorf("密钥文件 %s 格式异常；请恢复原密钥，禁止自动覆盖", keyFile)
+		}
+		return k, nil
 	}
 	if b, err := os.ReadFile(keyFile); err == nil {
-		if k, err := hex.DecodeString(strings.TrimSpace(string(b))); err == nil && len(k) == 32 {
-			return k, nil
-		}
+		return decodeKey(b)
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("读取密钥失败: %w", err)
+	}
+	var encrypted int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM setting WHERE is_secret=1 AND length(value_secret)>0`).Scan(&encrypted); err != nil {
+		return nil, err
+	}
+	if encrypted > 0 {
+		return nil, errors.New("密钥文件不存在但数据库已有加密配置；请恢复匹配密钥或 GK_SECRET_KEY")
 	}
 	if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
 		return nil, err
@@ -94,8 +138,33 @@ func loadKey(keyFile string) ([]byte, error) {
 	if _, err := rand.Read(k); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(keyFile, []byte(hex.EncodeToString(k)), 0o600); err != nil {
+	// Publish a fully written key atomically. O_EXCL alone exposes an empty file
+	// to concurrent starters before its write completes.
+	f, err := os.CreateTemp(filepath.Dir(keyFile), ".gk-key-")
+	if err != nil {
 		return nil, err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write([]byte(hex.EncodeToString(k))); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
+	if err = os.Link(f.Name(), keyFile); err != nil {
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		b, e := os.ReadFile(keyFile)
+		if e != nil {
+			return nil, e
+		}
+		return decodeKey(b)
 	}
 	fmt.Fprintf(os.Stderr, "已生成配置加密密钥: %s（请备份；丢失后需重新填写 API key）\n", keyFile)
 	return k, nil

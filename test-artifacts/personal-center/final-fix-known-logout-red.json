@@ -1,0 +1,9 @@
+{
+  "requests": [
+    {
+      "method": "PUT",
+      "url": "http://127.0.0.1:18083/api/account/profile"
+    }
+  ],
+  "url_after_save": "http://127.0.0.1:18083/login?redirect=/account"
+}

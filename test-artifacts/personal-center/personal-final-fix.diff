@@ -1,0 +1,1764 @@
+diff --git a/web/src/App.vue b/web/src/App.vue
+--- a/web/src/App.vue
++++ b/web/src/App.vue
+@@ -1,20 +1,25 @@
+ <script setup>
+ import { useRoute, useRouter } from 'vue-router'
+ import { auth, clearUser } from './auth'
+-import { api } from './api'
++import { api, forUser } from './api'
+ import { ref, watch } from 'vue'
+ import './components/account/account.css'
+ const route = useRoute(), router = useRouter(), error = ref(''), currentView = ref(null)
+ watch(() => route.fullPath, () => { error.value = '' })
+ const links = [['/questions','题库练习','题'],['/papers','真题试卷','卷'],['/concepts','考点地图','知'],['/wrongbook','错题本','错'],['/favorites','我的收藏','藏'],['/records','学习记录','记']]
+ async function logout() {
++  const admin = !!route.meta.admin, owner = admin ? auth.admin : auth.user?.id
++  const client = forUser(owner)
++  const ownsAction = () => admin ? auth.admin === owner : auth.user?.id === owner && !auth.identityChanged
+   error.value = ''
+   try {
+-    if (!route.meta.admin) await currentView.value?.savePending?.()
+-    if (route.meta.admin) { await api.logout(); auth.admin = null; await router.push('/admin/login') }
+-    else { await api.userLogout(); clearUser(); await router.push('/login') }
+-  } catch(e) { error.value = e.message }
++    if (!admin) await currentView.value?.savePending?.()
++    if (!ownsAction()) return
++    if (admin) { await api.logout(); if (!ownsAction()) return; auth.admin = null; await router.push('/admin/login') }
++    else { await client.userLogout(); if (!ownsAction()) return; clearUser({announce:true}); await router.push('/login') }
++  } catch(e) { if (admin ? auth.admin === owner : auth.user?.id === owner) error.value = e.message }
+ }
++
+ </script>
+ <template>
+   <a href="#main" class="skip">跳到正文</a>
+@@ -31,7 +36,7 @@
+     </aside>
+     <div class="workspace">
+       <header class="topbar"><span>{{ route.meta.title }}</span><div class="topbar-user"><RouterLink v-if="!route.meta.admin" to="/account" class="pc-topbar-link" aria-label="打开个人中心"><span :class="['avatar','pc-avatar',`pc-avatar-${auth.profile?.avatar_id || 0}`]">{{ Array.from(auth.user?.nickname || auth.user?.username || '?')[0]?.toUpperCase() }}</span><span>{{ auth.user?.nickname || auth.user?.username }}</span></RouterLink><span v-else>{{ auth.admin?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
+-      <main id="main" tabindex="-1"><p v-if="error" class="notice err" role="alert">{{ error }}</p><RouterView v-slot="{ Component }"><component :is="Component" :key="route.fullPath" ref="currentView" @logout="logout" /></RouterView></main>
++      <main id="main" tabindex="-1"><p v-if="auth.identityChanged&&!route.meta.admin" class="notice warn" role="alert">登录账户已变化，请记录未保存输入后重新进入个人中心。本页输入已保留。 <a href="/account">重新进入个人中心</a></p><p v-if="error" class="notice err" role="alert">{{ error }}</p><RouterView v-slot="{ Component }"><component :is="Component" :key="route.fullPath" ref="currentView" @logout="logout" /></RouterView></main>
+       <footer class="site-footer">行测研习 <span>以真题为起点，以理解为进步。</span></footer>
+     </div>
+   </div>
+diff --git a/web/src/auth.js b/web/src/auth.js
+--- a/web/src/auth.js
++++ b/web/src/auth.js
+@@ -1,22 +1,37 @@
+ import { reactive } from 'vue'
+-import { api } from './api'
+-export const auth = reactive({ user: null, admin: null, profile: null })
++import { api, setRequestOwner } from './api'
++export const auth = reactive({ user: null, admin: null, profile: null, identityChanged: false })
+ // Only the currently verified user owns this in-memory preference cache.
+ let profileGeneration = 0
+ let profileUserID = null
+-export function clearUser() {
++// Signals invalidate local assumptions only; only /auth/me establishes identity.
++const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('gk-account-identity')
++function invalidateIdentity() { auth.identityChanged = true; profileGeneration++; auth.profile = null; profileUserID = null }
++channel?.addEventListener('message', e => {
++  if (!auth.user) return
++  const signal = e.data
++  if (signal?.kind === 'login' && signal.id !== auth.user.id || signal?.kind === 'logout' && signal.id === auth.user.id) invalidateIdentity()
++})
++window.addEventListener('account-changed', e => { if (auth.user && e.detail === auth.user.id) invalidateIdentity() })
++export function clearUser({ announce = false, owner = auth.user?.id } = {}) {
++  setRequestOwner(null)
++  auth.identityChanged = false
++  if (announce) channel?.postMessage({ kind: 'logout', id: owner })
+   profileGeneration++
+   auth.user = null
+   auth.profile = null
+   profileUserID = null
+ }
+-export function setUser(user) {
++export function setUser(user, { announce = false } = {}) {
++  setRequestOwner(user?.id ?? null)
++  auth.identityChanged = false
++  if (announce) channel?.postMessage({ kind: 'login', id: user?.id ?? null })
+   if (profileUserID !== user?.id) { profileGeneration++; auth.profile = null; profileUserID = null }
+   auth.user = user
+   if (profileUserID === user?.id && auth.profile?.username === user.username) auth.user.nickname = auth.profile.nickname
+ }
+ export function applyProfile(profile, userID = auth.user?.id) {
+-  if (!auth.user || userID !== auth.user.id || profile.username !== auth.user.username) return false
++  if (auth.identityChanged || !auth.user || userID !== auth.user.id || profile.username !== auth.user.username) return false
+   // A valid response from this user may be older than a completed write.
+   // Treat it as an ignored read, not an identity error, and retain the high-water mark.
+   const confirmed = profileUserID === userID && auth.profile && auth.profile.revision > profile.revision ? auth.profile : profile
+diff --git a/web/src/api.js b/web/src/api.js
+--- a/web/src/api.js
++++ b/web/src/api.js
+@@ -1,27 +1,39 @@
++let requestOwner = null
++export function setRequestOwner(id) { requestOwner = id }
+ export async function request(path, options = {}) {
+-  const { responseType, ...fetchOptions } = options
++  const { responseType, expectedUser = requestOwner, ...fetchOptions } = options
++  const personal = !path.startsWith('/api/admin/') && !['/api/auth/login','/api/auth/register','/api/auth/me'].includes(path)
++  const identityHeader = personal && expectedUser != null ? { 'X-GK-Expected-User': String(expectedUser) } : {}
+   const res = await fetch(path, {
+     credentials: 'same-origin',
+     ...fetchOptions,
+-    headers: { 'Content-Type': 'application/json', ...options.headers },
++    headers: { 'Content-Type': 'application/json', ...identityHeader, ...options.headers },
+   })
+   if (res.ok && responseType === 'blob') return res.blob()
+   const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+   if (!res.ok) {
+     const e = new Error(body.error || `HTTP ${res.status}`)
+     e.status = res.status
++    e.code = body.code
++    if (body.code === 'account_changed') window.dispatchEvent(new CustomEvent('account-changed', { detail: expectedUser }))
+     if (res.status === 401 && !path.endsWith('/login') && !path.endsWith('/me')) {
+-      window.dispatchEvent(new CustomEvent('session-expired', { detail: path.startsWith('/api/admin/') ? 'admin' : 'user' }))
++      window.dispatchEvent(new CustomEvent('session-expired', { detail: path.startsWith('/api/admin/') ? 'admin' : { kind: 'user', expectedUser } }))
+     }
+     throw e
+   }
+   return body
+ }
+-const post = (path, data = {}) => request(path, { method: 'POST', body: JSON.stringify(data) })
+ export function query(values = {}) {
+   return new URLSearchParams(Object.entries(values).filter(([, v]) => v !== '' && v != null)).toString()
+ }
+-export const api = {
++export function forUser(owner) {
++  // Freeze the issuing page owner; a later setUser cannot rebind this client.
++  const scopedRequest = (path, options = {}) => request(path, { ...options, expectedUser: owner })
++  return createAPI(scopedRequest)
++}
++function createAPI(request) {
++const post = (path, data = {}) => request(path, { method: 'POST', body: JSON.stringify(data) })
++return {
+   me: () => request('/api/admin/me'),
+   login: (username, password) => post('/api/admin/login', { username, password }),
+   logout: () => post('/api/admin/logout'),
+@@ -66,3 +78,6 @@
+   favorites: f => request(`/api/favorites?${query(f)}`),
+   favoriteAction: (id, action) => post(`/api/favorites/${id}`, { action }),
+ }
++
++}
++export const api = createAPI(request)
+diff --git a/web/src/router/index.js b/web/src/router/index.js
+--- a/web/src/router/index.js
++++ b/web/src/router/index.js
+@@ -35,6 +35,8 @@
+ })
+ window.addEventListener('session-expired', e => {
+   const admin = e.detail === 'admin'
++  if (!admin && auth.identityChanged) return
++  if (!admin && typeof e.detail === 'object' && e.detail.expectedUser !== auth.user?.id) return
+   if (admin) auth.admin = null
+   else clearUser()
+   router.replace({ path: admin ? '/admin/login' : '/login', query: { redirect: router.currentRoute.value.fullPath } })
+diff --git a/web/src/views/Login.vue b/web/src/views/Login.vue
+--- a/web/src/views/Login.vue
++++ b/web/src/views/Login.vue
+@@ -2,7 +2,7 @@
+ import { computed, ref } from 'vue'
+ import { useRoute, useRouter } from 'vue-router'
+ import { api } from '../api'
+-import { auth } from '../auth'
++import { auth, setUser } from '../auth'
+ const route = useRoute(), router = useRouter()
+ const admin = computed(() => !!route.meta.admin), register = ref(false)
+ const username = ref(''), password = ref(''), nickname = ref(''), busy = ref(false), error = ref('')
+@@ -11,7 +11,7 @@
+   try {
+     if (register.value && !admin.value) await api.register({ username: username.value, password: password.value, nickname: nickname.value })
+     if (admin.value) auth.admin = await api.login(username.value, password.value)
+-    else auth.user = await api.userLogin(username.value,password.value)
++    else setUser(await api.userLogin(username.value,password.value), { announce: true })
+     const to = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : admin.value ? '/admin' : '/questions'
+     await router.replace(to)
+   } catch(e) { error.value=e.message } finally { busy.value=false }
+diff --git a/web/src/views/Account.vue b/web/src/views/Account.vue
+--- a/web/src/views/Account.vue
++++ b/web/src/views/Account.vue
+@@ -1,13 +1,14 @@
+ <script setup>
+ import { computed,onBeforeUnmount,onMounted,ref,nextTick } from 'vue'
+ import { onBeforeRouteLeave,onBeforeRouteUpdate } from 'vue-router'
+-import { api } from '../api'
++import { forUser } from '../api'
+ import { auth,applyProfile } from '../auth'
+ import Avatar from '../components/account/Avatar.vue'
+ import Overview from '../components/account/Overview.vue'
+ import Review from '../components/account/Review.vue'
+ import ProfileForm from '../components/account/ProfileForm.vue'
+ import Security from '../components/account/Security.vue'
++const api=forUser(auth.user?.id)
+ const emit=defineEmits(['logout'])
+ const tabs=['学习总览','复习助手','资料与偏好','账户安全'],tab=ref(0),tablist=ref(null),days=ref(30),profile=ref(auth.profile),dashboard=ref(null),busy=ref(false),error=ref(''),profileError=ref(''),form=ref(null),security=ref(null)
+ let loadGeneration=0,alive=true
+@@ -18,13 +19,13 @@
+ async function load(){const generation=++loadGeneration;busy.value=true;error.value='';try{const data=await api.dashboard(days.value);if(ownsPage()&&generation===loadGeneration){if(data.profile.username!==pageUsername){error.value='登录账户已变化，请重新进入个人中心';return};dashboard.value=data;saved(data.profile)}}catch(e){if(ownsPage()&&generation===loadGeneration)error.value=e.message}finally{if(ownsPage()&&generation===loadGeneration)busy.value=false}}
+ async function reloadProfile(){profileError.value='';try{const p=await api.profile();if(ownsPage()&&!saved(p))profileError.value='登录账户已变化，请重新进入个人中心'}catch(e){if(ownsPage())profileError.value=e.message}}
+ function saved(p){if(!ownsPage()||p.username!==pageUsername||!applyProfile(p,pageUserID))return false;profile.value=auth.profile;if(dashboard.value)dashboard.value.profile=auth.profile;return true}
+-function guard(){if(!auth.user)return true;if(form.value?.busy||security.value?.busy)return false;if(form.value?.dirty||security.value?.dirty){if(!window.confirm('有尚未保存的资料或密码输入。取消可返回保存；确定将放弃修改并离开。'))return false;form.value?.reset();security.value?.reset()}return true}
++function guard(reset=true){if(!auth.user)return true;if(form.value?.busy||security.value?.busy)return false;if(form.value?.dirty||security.value?.dirty){if(!window.confirm('有尚未保存的资料或密码输入。取消可返回保存；确定将放弃修改并离开。'))return false;if(reset){form.value?.reset();security.value?.reset()}}return true}
+ function switchTab(i){if(i===tab.value)return true;if(!guard())return false;tab.value=i;return true}
+ async function tabKey(e,i){let target;if(e.key==='ArrowRight')target=(i+1)%4;else if(e.key==='ArrowLeft')target=(i+3)%4;else if(e.key==='Home')target=0;else if(e.key==='End')target=3;else return;e.preventDefault();if(switchTab(target)){await nextTick();tablist.value?.querySelectorAll('button')[target]?.focus()}}
+ function beforeUnload(e){if(form.value?.dirty||security.value?.dirty||form.value?.busy||security.value?.busy){e.preventDefault();e.returnValue=''}}
+ onBeforeRouteLeave(()=>guard())
+ onBeforeRouteUpdate(()=>guard())
+-defineExpose({savePending:async()=>{if(!guard())throw new Error('尚未保存的资料已保留，请保存后再退出')}})
++defineExpose({savePending:async()=>{if(auth.identityChanged)throw new Error('登录账户已变化，请记录未保存输入后重新进入个人中心');if(!guard(false))throw new Error('尚未保存的资料已保留，请保存后再退出')}})
+ onMounted(()=>{load();if(!profile.value)reloadProfile();window.addEventListener('beforeunload',beforeUnload)})
+ onBeforeUnmount(()=>{alive=false;loadGeneration++;window.removeEventListener('beforeunload',beforeUnload)})
+ </script>
+diff --git a/web/src/components/account/Security.vue b/web/src/components/account/Security.vue
+--- a/web/src/components/account/Security.vue
++++ b/web/src/components/account/Security.vue
+@@ -1,19 +1,24 @@
+ <script setup>
+-import { computed,onMounted,ref } from 'vue'
++import { computed,onMounted,onBeforeUnmount,ref } from 'vue'
+ import { useRouter } from 'vue-router'
+-import { api } from '../../api'
+-import { clearUser } from '../../auth'
++import { forUser } from '../../api'
++import { auth, clearUser } from '../../auth'
++const pageUserID=auth.user?.id,api=forUser(pageUserID)
++let alive=true
++const ownsPage=()=>alive&&auth.user?.id===pageUserID&&!auth.identityChanged
++onBeforeUnmount(()=>{alive=false;requestSequence++})
++function ensureOwner(){if(ownsPage())return true;error.value='登录账户已变化，请记录未保存输入后重新进入个人中心';return false}
+ const emit=defineEmits(['logout'])
+ const router=useRouter(),current=ref(''),password=ref(''),confirm=ref(''),error=ref(''),notice=ref(''),busy=ref(false),sessionsBusy=ref(false),sessionsError=ref(''),sessions=ref({items:[],page:1,total:0,size:20})
+ const dirty=computed(()=>!!(current.value||password.value||confirm.value))
+ const displayTime=v=>v?new Date(v).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'信息未知'
+ function reset(){current.value='';password.value='';confirm.value=''}
+-async function change(){if(busy.value)return;error.value='';if(password.value!==confirm.value){error.value='两次输入的新密码不一致';return};busy.value=true;try{await api.userPassword({current_password:current.value,password:password.value});reset();clearUser();await router.replace('/login')}catch(e){error.value=e.message}finally{busy.value=false}}
+-async function rebuild(){if(busy.value)return;busy.value=true;error.value='';notice.value='';try{await api.rebuildStats();notice.value='考点练习统计已重新计算'}catch(e){error.value=e.message}finally{busy.value=false}}
++async function change(){if(busy.value||!ensureOwner())return;error.value='';if(password.value!==confirm.value){error.value='两次输入的新密码不一致';return};busy.value=true;try{await api.userPassword({current_password:current.value,password:password.value});if(!ownsPage())return;reset();clearUser({announce:true});await router.replace('/login')}catch(e){if(ownsPage())error.value=e.message}finally{busy.value=false}}
++async function rebuild(){if(busy.value||!ensureOwner())return;busy.value=true;error.value='';notice.value='';try{await api.rebuildStats();if(!ownsPage())return;notice.value='考点练习统计已重新计算'}catch(e){if(ownsPage())error.value=e.message}finally{busy.value=false}}
+ let requestSequence=0
+-async function load(page=1){const seq=++requestSequence;sessionsBusy.value=true;sessionsError.value='';try{const result=await api.loginSessions(page);if(seq===requestSequence)sessions.value=result}catch(e){if(seq===requestSequence)sessionsError.value=e.message}finally{if(seq===requestSequence)sessionsBusy.value=false}}
+-async function revoke(item){if(sessionsBusy.value||item.current)return;if(!window.confirm('撤销这份登录会话后，该设备需要重新登录。确定撤销吗？'))return;sessionsBusy.value=true;sessionsError.value='';try{await api.revokeSession(item.public_id);await load(Math.max(1,Math.min(sessions.value.page,Math.ceil((sessions.value.total-1)/20))))}catch(e){sessionsError.value=e.message}finally{sessionsBusy.value=false}}
+-async function revokeOthers(){if(sessionsBusy.value)return;if(!window.confirm('确定退出其他所有登录会话吗？当前设备会保留登录。'))return;sessionsBusy.value=true;sessionsError.value='';try{const result=await api.revokeOtherSessions();notice.value=`已退出 ${result.revoked} 个其他会话，当前会话已保留`;await load()}catch(e){sessionsError.value=e.message}finally{sessionsBusy.value=false}}
++async function load(page=1){if(!ensureOwner())return;const seq=++requestSequence;sessionsBusy.value=true;sessionsError.value='';try{const result=await api.loginSessions(page);if(ownsPage()&&seq===requestSequence)sessions.value=result}catch(e){if(ownsPage()&&seq===requestSequence)sessionsError.value=e.message}finally{if(ownsPage()&&seq===requestSequence)sessionsBusy.value=false}}
++async function revoke(item){if(sessionsBusy.value||item.current||!ensureOwner())return;if(!window.confirm('撤销这份登录会话后，该设备需要重新登录。确定撤销吗？'))return;sessionsBusy.value=true;sessionsError.value='';try{await api.revokeSession(item.public_id);if(!ownsPage())return;await load(Math.max(1,Math.min(sessions.value.page,Math.ceil((sessions.value.total-1)/20))))}catch(e){if(ownsPage())sessionsError.value=e.message}finally{sessionsBusy.value=false}}
++async function revokeOthers(){if(sessionsBusy.value||!ensureOwner())return;if(!window.confirm('确定退出其他所有登录会话吗？当前设备会保留登录。'))return;sessionsBusy.value=true;sessionsError.value='';try{const result=await api.revokeOtherSessions();if(!ownsPage())return;notice.value=`已退出 ${result.revoked} 个其他会话，当前会话已保留`;await load()}catch(e){if(ownsPage())sessionsError.value=e.message}finally{sessionsBusy.value=false}}
+ onMounted(()=>load())
+ defineExpose({dirty,busy,reset})
+ </script>
+diff --git a/web/src/components/account/Review.vue b/web/src/components/account/Review.vue
+--- a/web/src/components/account/Review.vue
++++ b/web/src/components/account/Review.vue
+@@ -1,7 +1,9 @@
+ <script setup>
+ import { ref } from 'vue'
+ import { useRouter } from 'vue-router'
+-import { api } from '../../api'
++import { forUser } from '../../api'
++import { auth } from '../../auth'
++const api=forUser(auth.user?.id)
+ const props=defineProps({review:Object,profile:Object,days:Number})
+ const router=useRouter(),busy=ref(''),error=ref('')
+ const kindName={single:'专项练习',concept:'考点练习',wrongbook:'错题复练',paperset:'真题练习',favorite:'收藏练习'}
+diff --git a/web/src/components/account/ProfileForm.vue b/web/src/components/account/ProfileForm.vue
+--- a/web/src/components/account/ProfileForm.vue
++++ b/web/src/components/account/ProfileForm.vue
+@@ -1,8 +1,9 @@
+ <script setup>
+ import { computed,onBeforeUnmount,ref,watch } from 'vue'
+-import { api } from '../../api'
++import { forUser } from '../../api'
+ import { auth,applyProfile } from '../../auth'
+ import Avatar from './Avatar.vue'
++const api=forUser(auth.user?.id)
+ const props=defineProps({profile:Object}),emit=defineEmits(['saved'])
+ const pageUserID=auth.user?.id,pageUsername=props.profile.username
+ let alive=true
+@@ -11,15 +12,16 @@
+ const fields=['nickname','bio','avatar_id','daily_questions','daily_minutes','exam_name','exam_date','default_limit','default_module','reading_size','revision']
+ const editable=p=>Object.fromEntries(fields.map(key=>[key,p[key]]))
+ const draft=ref(editable(props.profile)),baseline=ref(JSON.stringify(draft.value)),busy=ref(false),error=ref(''),notice=ref(''),conflict=ref(false),errors=ref({}),modules=ref([]),moduleError=ref(''),exportDays=ref('30'),exportBusy=ref(false),exportError=ref('')
++function ensureOwner(target=error){if(alive&&auth.user?.id===pageUserID&&!auth.identityChanged)return true;target.value='登录账户已变化，请记录未保存输入后重新进入个人中心';return false}
+ const dirty=computed(()=>JSON.stringify(draft.value)!==baseline.value)
+ function reset(profile=props.profile){if(profile.username!==pageUsername||profile.revision<draft.value.revision)return;draft.value=editable(profile);baseline.value=JSON.stringify(draft.value);error.value='';errors.value={};conflict.value=false;notice.value=''}
+ watch(()=>props.profile,p=>{if(p.revision>=draft.value.revision&&!dirty.value&&JSON.stringify(editable(p))!==baseline.value)reset(p)})
+ async function loadModules(){moduleError.value='';try{const filters=await api.filters();modules.value=filters.modules || []}catch(e){moduleError.value=e.message}}
+ loadModules()
+ function validate(){const e={};for(const [key,max] of [['nickname',40],['bio',200],['exam_name',40]])if(Array.from(draft.value[key]).length>max)e[key]=`最多 ${max} 个字符`;for(const [key,min,max] of [['daily_questions',5,200],['daily_minutes',5,180]])if(!Number.isInteger(draft.value[key])||draft.value[key]<min||draft.value[key]>max)e[key]=`请输入 ${min}–${max} 的整数`;if(draft.value.exam_date&&draft.value.exam_date!==props.profile.exam_date){const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const maxDate=new Date(today+'T00:00:00Z');maxDate.setUTCFullYear(maxDate.getUTCFullYear()+5);const maxDay=maxDate.toISOString().slice(0,10);if(draft.value.exam_date<=today||draft.value.exam_date>maxDay)e.exam_date='新设置的日期需为北京时间未来日期，最多五年后'}errors.value=e;return !Object.keys(e).length}
+-async function save(){if(busy.value||conflict.value)return;error.value='';notice.value='';if(!validate()){error.value='请检查标出的资料字段';return};busy.value=true;try{const saved=await api.saveProfile(editable(draft.value)),confirmed=receive(saved);if(!confirmed)return;reset(confirmed);emit('saved',confirmed);notice.value=confirmed.revision===saved.revision?`资料与偏好已保存 · 版本 ${saved.revision}`:`本次保存已完成（版本 ${saved.revision}），已同步较新资料（版本 ${confirmed.revision}）`}catch(e){error.value=e.status===409?'资料已在其他窗口更新。本页输入已保留，请先记录，再确认重新加载服务器资料。':e.message;conflict.value=e.status===409}finally{busy.value=false}}
+-async function reload(){if(busy.value)return;if(!window.confirm('重新加载会放弃本页尚未保存的资料，请先记录本页输入。确定重新加载吗？'))return;busy.value=true;try{const p=receive(await api.profile());if(p){reset(p);emit('saved',p)}}catch(e){error.value=e.message}finally{busy.value=false}}
+-async function download(){if(exportBusy.value)return;exportBusy.value=true;exportError.value='';try{const blob=await api.exportRecords(exportDays.value);const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='行测研习-个人作答记录.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){exportError.value=e.message}finally{exportBusy.value=false}}
++async function save(){if(busy.value||conflict.value)return;error.value='';notice.value='';if(!ensureOwner())return;if(!validate()){error.value='请检查标出的资料字段';return};busy.value=true;try{const saved=await api.saveProfile(editable(draft.value)),confirmed=receive(saved);if(!confirmed)return;reset(confirmed);emit('saved',confirmed);notice.value=confirmed.revision===saved.revision?`资料与偏好已保存 · 版本 ${saved.revision}`:`本次保存已完成（版本 ${saved.revision}），已同步较新资料（版本 ${confirmed.revision}）`}catch(e){error.value=e.status===409&&e.code!=='account_changed'?'资料已在其他窗口更新。本页输入已保留，请先记录，再确认重新加载服务器资料。':e.message;conflict.value=e.status===409&&e.code!=='account_changed'}finally{busy.value=false}}
++async function reload(){if(busy.value||!ensureOwner())return;if(!window.confirm('重新加载会放弃本页尚未保存的资料，请先记录本页输入。确定重新加载吗？'))return;busy.value=true;try{const p=receive(await api.profile());if(p){reset(p);emit('saved',p)}}catch(e){error.value=e.message}finally{busy.value=false}}
++async function download(){if(exportBusy.value||!ensureOwner(exportError))return;exportBusy.value=true;exportError.value='';try{const blob=await api.exportRecords(exportDays.value);const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='行测研习-个人作答记录.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){exportError.value=e.message}finally{exportBusy.value=false}}
+ defineExpose({dirty,busy,reset})
+ </script>
+ <template><div><form class="pc-card pc-profile-form" @submit.prevent="save" novalidate><div class="pc-card-heading"><div><h2>资料与学习偏好</h2><p class="muted small">设置保存到你的学习账户，在其他设备登录也能恢复。</p></div><span class="pc-tag">{{ dirty?'尚未保存':'已同步' }} · 版本 {{ profile.revision }}</span></div><p v-if="error" class="notice err" role="alert">{{ error }}</p><div v-if="conflict" class="notice warn"><button type="button" :disabled="busy" @click="reload">重新加载服务器资料</button><p class="small">重新加载前会再次确认，当前输入不会自动覆盖服务器。</p></div><p v-if="notice" class="notice ok" role="status">{{ notice }}</p><fieldset :disabled="busy"><legend>个人资料</legend><div class="pc-form-grid"><label>用户名<input :value="profile.username" readonly autocomplete="username"/></label><label>昵称<input aria-label="昵称" v-model="draft.nickname" maxlength="80" :aria-invalid="!!errors.nickname" aria-describedby="pc-nickname-hint"/><small id="pc-nickname-hint">{{ errors.nickname || '最多 40 个字符' }}</small></label><label class="pc-span-two">简介<textarea aria-label="简介" v-model="draft.bio" rows="3" maxlength="400" :aria-invalid="!!errors.bio" aria-describedby="pc-bio-hint"/><small id="pc-bio-hint">{{ errors.bio || '最多 200 个字符' }}</small></label></div><p class="pc-field-label">头像样式</p><div class="pc-avatar-options" role="group" aria-label="头像样式"><button v-for="id in 8" :key="id" type="button" :aria-label="`头像样式 ${id-1}`" :aria-pressed="draft.avatar_id===id-1" :class="{'pc-avatar-chosen':draft.avatar_id===id-1}" @click="draft.avatar_id=id-1"><Avatar :id="id-1" :name="draft.nickname || profile.username"/><span>{{ id-1 }}</span></button></div></fieldset><fieldset :disabled="busy"><legend>今日目标与考试</legend><div class="pc-form-grid"><label>每日作答目标<input aria-label="每日作答目标" v-model.number="draft.daily_questions" type="number" min="5" max="200" step="1" :aria-invalid="!!errors.daily_questions" aria-describedby="pc-questions-hint"/><small id="pc-questions-hint">{{ errors.daily_questions || '5–200 次非空作答' }}</small></label><label>每日分钟目标<input aria-label="每日分钟目标" v-model.number="draft.daily_minutes" type="number" min="5" max="180" step="1" :aria-invalid="!!errors.daily_minutes" aria-describedby="pc-minutes-hint"/><small id="pc-minutes-hint">{{ errors.daily_minutes || '5–180 分钟记录时长' }}</small></label><label>考试名称<input aria-label="考试名称" v-model="draft.exam_name" maxlength="80" :aria-invalid="!!errors.exam_name"/><small>{{ errors.exam_name || '选填，最多 40 个字符' }}</small></label><label>考试日期<input aria-label="考试日期" v-model="draft.exam_date" type="date" :aria-invalid="!!errors.exam_date" aria-describedby="pc-date-hint"/><small id="pc-date-hint">{{ errors.exam_date || '选填；新日期需为未来且最多五年后。已到期日期可保持原值。' }}</small></label></div></fieldset><fieldset :disabled="busy"><legend>练习偏好</legend><p v-if="moduleError" class="notice err" role="alert">模块加载失败：{{ moduleError }} <button type="button" @click="loadModules">重试</button></p><div class="pc-form-grid"><label>默认题量<select aria-label="默认题量" v-model.number="draft.default_limit"><option :value="10">10 题</option><option :value="20">20 题</option><option :value="50">50 题</option></select></label><label>默认模块<select aria-label="默认模块" v-model="draft.default_module"><option value="">全部模块</option><option v-for="module in modules" :key="module" :value="module">{{ module }}</option><option v-if="draft.default_module&&!modules.includes(draft.default_module)" :value="draft.default_module">{{ draft.default_module }}</option></select><small>题库 URL 中的明确筛选条件优先。</small></label><label>练习正文字号<select aria-label="练习正文字号" v-model.number="draft.reading_size"><option :value="16">标准 · 16px</option><option :value="18">舒适 · 18px</option><option :value="20">大字 · 20px</option></select></label><p class="pc-reading-preview" :style="{fontSize:([16,18,20].includes(draft.reading_size)?draft.reading_size:16)+'px'}">阅读预览：先独立作答，再对照解析。</p></div></fieldset><div class="pc-form-actions"><button class="primary" type="submit" :disabled="busy||conflict">{{ busy?'正在保存…':'保存资料与偏好' }}</button><button type="button" :disabled="busy||!dirty" @click="reload">放弃修改并重载</button><span class="muted small">{{ profile.updated_at ? '最近更新：'+profile.updated_at.slice(0,10) : '' }}</span></div></form><section class="pc-card pc-export"><h2>导出个人作答记录</h2><p class="muted">只包含本人已提交的作答，不包含未提交草稿或题目解析。每次最多 5,000 条，超过时请缩小范围。</p><div class="pc-export-controls"><label>导出范围<select v-model="exportDays"><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option><option value="all">全部记录</option></select></label><button :disabled="exportBusy" @click="download">{{ exportBusy?'正在导出…':'下载 CSV' }}</button></div><p v-if="exportError" class="notice err" role="alert">{{ exportError }}</p></section></div></template>
+diff --git a/internal/serve/study.go b/internal/serve/study.go
+--- a/internal/serve/study.go
++++ b/internal/serve/study.go
+@@ -34,6 +34,9 @@
+ 			} else {
+ 				s.fail(w, "读取会话失败", err)
+ 			}
++			return
++		}
++		if !expectedUserMatches(w, r, u.ID) {
+ 			return
+ 		}
+ 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
+@@ -227,11 +230,24 @@
+ 	writeJSON(w, 200, u)
+ }
+ func (s *Server) userLogout(w http.ResponseWriter, r *http.Request) {
++	// Legacy logout remains idempotent. A page identity precondition first needs
++	// the same verified principal boundary as other authenticated operations.
++	if _, present := r.Header[http.CanonicalHeaderKey("X-GK-Expected-User")]; present {
++		s.requireUser(http.HandlerFunc(s.logoutVerifiedUser)).ServeHTTP(w, r)
++		return
++	}
++	s.logoutVerifiedUser(w, r)
++}
++func (s *Server) logoutVerifiedUser(w http.ResponseWriter, r *http.Request) {
+ 	if err := s.Study.Logout(r.Context(), cookieToken(r, userCookie)); err != nil {
+ 		s.studyError(w, err)
+ 		return
+ 	}
+-	http.SetCookie(w, &http.Cookie{Name: userCookie, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
++	// Guarded pages revoke this token without a delayed response deleting a
++	// Cookie issued by a later login. Legacy logout keeps explicit deletion.
++	if _, guarded := r.Header[http.CanonicalHeaderKey("X-GK-Expected-User")]; !guarded {
++		http.SetCookie(w, &http.Cookie{Name: userCookie, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
++	}
+ 	writeJSON(w, 200, map[string]any{"ok": true})
+ }
+ func (s *Server) userPassword(w http.ResponseWriter, r *http.Request) {
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -103,7 +103,7 @@
+ 	cp README.md var/release/README.md
+ 	cp 第一轮修复文档.md var/release/
+ 	cp 第二轮修复文档.md 第二轮上线就绪审查报告.md var/release/
+-	cp docs/deployment-2c4g.md docs/api-design.md docs/website-completion.md docs/ocr-environment.md docs/personal-center.md docs/personal-center-task4-report.md var/release/docs/
++	cp docs/deployment-2c4g.md docs/api-design.md docs/website-completion.md docs/ocr-environment.md docs/personal-center.md docs/personal-center-task4-report.md docs/personal-center-final-fix-report.md var/release/docs/
+ 	tar -czf var/gk-linux-amd64.tar.gz -C var/release README.md 第一轮修复文档.md 第二轮修复文档.md 第二轮上线就绪审查报告.md gk deploy taxonomy docs
+ 
+ backup: build
+diff --git a/docs/api-design.md b/docs/api-design.md
+--- a/docs/api-design.md
++++ b/docs/api-design.md
+@@ -1,6 +1,10 @@
+ # 网站 API（p3-next-steps A/B/C 实现）
+ 
+ 所有业务接口在 `/api` 下，通常以 JSON 收发；个人记录导出成功为 `text/csv` 附件。错误格式：`{"error":"错误说明"}`。普通用户通过 HttpOnly Cookie `gk_user` 鉴权；管理员使用独立 Cookie `gk_admin`，两者不互通。会话存储在 SQLite，普通用户 token 只存 SHA-256 摘要，密码使用 bcrypt。写请求检查同源，API 响应不缓存。
++
++页面可对普通用户业务请求和 `/auth/logout` 携带 `X-GK-Expected-User: <已验证用户id>`（规范正整数，仅一个值）。服务器先检查 Origin（写请求）和 Cookie，再与该 Cookie 的已验证用户比较；不符为 409 `{"code":"account_changed","error":"登录账户已变化，请记录未保存输入后重新进入个人中心"}`，在资料、CSV、会话、改密、重算统计及其他普通用户业务执行前拒绝。非法前提为 400，身份无效仍为 401；400/409 不修改有效 Cookie。该 header 只能拒绝，所有查询和写入对象始终从已验证 Cookie 获取；不接受它作为用户选择/授权，也不向 ProfileUpdate 加身份字段。
++
++带前提的 logout 成功仅撤销已验证 Cookie 对应 token，不返回删除 Cookie 的 Set-Cookie，防止迟到 A 退出响应删除后来 B 的 Cookie；新页面随后清理本地身份并通知其他标签。旧 HttpOnly Cookie 可留到过期或下次登录，但对应 token 已失效，不再能认证，不产生新凭据。不携带该前提的原客户端继续使用原合同，logout 保持原幂等及删除 Cookie。管理员和公开登录/注册/身份发现接口不采用此前提。页面将前提固定于发起表单的原账号，跨标签通知只失效旧页面假设并提示重新进入，不授予新账号身份；通知未到也由服务器拒绝错账号请求。迟到的身份不符响应只失效其发起账号，不能清除后来登录账号的偏好。
+ 
+ ## 账户
+ 
+diff --git a/docs/deployment-2c4g.md b/docs/deployment-2c4g.md
+--- a/docs/deployment-2c4g.md
++++ b/docs/deployment-2c4g.md
+@@ -378,6 +378,8 @@
+ 
+ 停掉网站，保留当前数据库、`-wal` 和 `-shm` 文件作为回滚副本，然后安装已确认的 `gk.sqlite` 和对应的 `secret.key`，最后启动 `gk` 并检查 `/healthz`。恢复前不要把新旧 WAL/SHM 混在一起。快照、密钥必须来自同一次备份。
+ 
++完整数据库恢复会回滚密码和会话状态，现有隔离恢复测试刻意验证原 Cookie 可恢复认证。现代退出后残留的无效 HttpOnly Cookie，如果对应已撤销会话被旧快照恢复，可能重新可用；正式回滚或灾难恢复应按恢复策略统一撤销历史会话并要求重新登录。这里明确运维恢复边界，不改变现有恢复合同，本轮没有执行正式库恢复或会话清理。
++
+ ### 12.3 升级
+ 
+ 本地执行 `make release`，将新包上传到服务器。先触发一次备份，再停止 Go 服务；将旧二进制复制到 `/opt/gk/var/gk.previous`，解压新包，检查文件可执行权限，启动服务并重新验收。保留并继续使用 `/opt/gk/var/db/gk.sqlite`、`secret.key` 和 `data/`，不要解压/覆盖数据库或密钥。
+@@ -395,6 +397,8 @@
+ 升级线上服务仍按 12.3 停服务/保留旧程序/安装新包执行，不重建题库、不更换有效密钥；前端必须随新二进制更新，浏览器刷新。回滚使用升级前数据库快照、匹配密钥和旧二进制；v12 新增资料与会话显示数据可能不在升级前快照中，需明确回滚恢复点，不进行手写删表降级。
+ 
+ 本地 `make release` 包含个人中心使用说明和集成交付报告，不包含数据库、密钥、备份、测试 fixture 或题库图片。传包前列出 `tar -tzf var/gk-linux-amd64.tar.gz` 并计算 `sha256sum var/gk-linux-amd64.tar.gz`。本轮只完成本地隔离库迁移/恢复、Chrome 页面回归与跨平台编译；线上 HTTPS/实际代理、压力/长时间运行、Windows/macOS 原生运行及异机完整恢复须在目标环境执行。完整证据见 [Task4 报告](personal-center-task4-report.md)。
++
++个人中心最终修复增加普通用户页面身份前提，无新增迁移或依赖。部署时必须使用包含新嵌入前端和服务端的新二进制，并刷新已有页面；反向代理必须透传 `X-GK-Expected-User` 请求 header；该前提只拒绝不授权，不能用作鉴权或改写用户选择。正式代理环境仍未测。服务器无 header 保持旧 API 兼容，所以旧缓存页面不具备新页面的账号前提保护；发布后请重新进入页面。出现 `account_changed` 409 时保留输入并重新进入，不应清除当前有效 Cookie。新本地包与旧封存包的证据分开记录，见 [最终修复记录](personal-center-final-fix-report.md)；未执行线上部署。
+ 
+ ## 13. 服务器网站验收后再做蒸馏
+ 
+diff --git a/docs/personal-center.md b/docs/personal-center.md
+--- a/docs/personal-center.md
++++ b/docs/personal-center.md
+@@ -14,6 +14,8 @@
+ 考试日期可为空；新日期必须是北京时间未来日期，最多五年后。已存日期到期后显示“已到/已过”，不会变为负倒计时或被自动删除，也可保留日期修改其他资料。目标进度最高显示 100%，实际超额数量仍显示。
+ 
+ 保存包含资料版本。其他窗口先保存时，本次收到 409 会保留输入；确认重新加载后再编辑保存。页面不会自动重发旧版本。成功保存同步顶部昵称/头像和偏好，同账号迟到的旧资料响应不会让已确认版本倒退。未保存输入离开页面、换页签或退出时有保护；保存等待中阻止重复保存和离开。400/409 不表示身份失效。
++
++同一浏览器另一标签退出或换账号时，旧页面提示“登录账户已变化”，保留尚未保存的资料/密码输入。请先记录输入，再点“重新进入个人中心”读取当前登录账号。旧页资料保存/重载、CSV、安全操作和退出都不能把操作套到新账号；没有及时收到通知时，服务器也会拒绝账号不符的请求。账号变化的 409 与同账号资料版本冲突分开处理，不提供自动覆盖或直接重发。新页面退出会撤销服务器会话并清理本地身份，响应不删除浏览器 Cookie，避免迟到的旧账号退出响应影响后来登录的账号；残留 Cookie 已不能认证，会在过期或再次登录时替换。
+ 
+ ## 统计口径
+ 
+@@ -35,4 +37,4 @@
+ 
+ ## 升级与验证
+ 
+-v12 为追加迁移，回填旧账户默认资料和独立公开会话 ID，保留密码、登录摘要、草稿版本和历史提交。升级前生成并验证完整数据库与有效密钥 bundle，在副本验证新程序；回滚需恢复升级前数据库、匹配密钥与旧程序。步骤见 [部署手册](deployment-2c4g.md)，接口见 [API 文档](api-design.md)，本地集成证据与未测边界见 [Task4 记录](personal-center-task4-report.md)。
++v12 为追加迁移，回填旧账户默认资料和独立公开会话 ID，保留密码、登录摘要、草稿版本和历史提交。升级前生成并验证完整数据库与有效密钥 bundle，在副本验证新程序；回滚需恢复升级前数据库、匹配密钥与旧程序。步骤见 [部署手册](deployment-2c4g.md)，接口见 [API 文档](api-design.md)，本地集成证据与未测边界见 [Task4 记录](personal-center-task4-report.md) 和 [最终修复记录](personal-center-final-fix-report.md)。
+diff --git a/docs/personal-center-task4-report.md b/docs/personal-center-task4-report.md
+--- a/docs/personal-center-task4-report.md
++++ b/docs/personal-center-task4-report.md
+@@ -45,3 +45,13 @@
+ Task4 diff 从分派开始刷新后的27文件快照生成，见 [task4-review.diff](../test-artifacts/personal-center/task4-review.diff)；只包含本任务测试/文档/Makefile变化，不把之前未提交修复或Task3 R1修改算入。完整功能宽范围审查包由根代理生成并分派，账本只标“待终审”。
+ 
+ 未测正式环境边界：正式数据库/实际密钥升级，线上HTTPS/可信代理配置/压力/长时间运行，异机完整恢复，Windows/macOS原生运行、其他浏览器和真实屏幕阅读器。临时结构迁移、合成历史并发与bundle恢复不等于生产大库/线上性能验收；交叉编译不等于目标系统运行。本次无远程发布。
++
++## 2026-10-06 最终修复集成交付附录
++
++本节是原Task4之后的R1修复交付，原文和task4-results/package-manifest仅代表旧版本，不包含本次修复。最终宽范围审查唯一Important R1是共享Cookie换账号后旧页可写新账号资料；修复与相关身份回调/迟到退出的Ruling、真实红绿、最终新证据见 [最终修复记录](personal-center-final-fix-report.md)。原始最终审查报告保留，完成修复后仍待唯一独立定向复审。
++
++本轮保持ProfileUpdate白名单和Cookie鉴权，引入可选页面预期身份拒绝前提，统一保护本人读取/副作用；旧页面owner固定、跨标签提示保留输入、迟到回调不影响新owner。现代logout撤销会话且无删除Cookie响应，legacy仍删除Cookie。无需新迁移或依赖。
++
++最终新7组定向UI通过（双标签静默/通知2、迟到409/改密/撤销/退出4、只退出通知1），Go全量、最终相关race/vet/前端构建及Linux/Windows/macOS amd64编译均通过。根稳定主修复版原45组均通过；此后仅已知stale早期拒绝/401保留分支调整，以最终7+ordering4验证，普通45不重复、不冒称在狭窄分支调整后全量重跑。新包和独立final-fix-*结果对应最后代码；新发布包补入本最终修复报告，历史旧包在 `_work/pre-final-fix-release/`保留。新包审计与SHA不写进包内报告以避免自引用，见 `final-fix-package-manifest.json`及`final-fix-sealed-manifest.json`。
++
++本地交付不包含正式库/密钥/备份/fixture；目标环境和未测生产边界沿用上节。没有提交、推送或生产部署。
+diff --git a/docs/personal-center-progress.md b/docs/personal-center-progress.md
+--- a/docs/personal-center-progress.md
++++ b/docs/personal-center-progress.md
+@@ -7,7 +7,7 @@
+ | 1 迁移、资料、会话 | 已完成 | 15项定向、Go全量、相关包race/vet通过；独立规格/质量审查通过 |
+ | 2 看板、复习、导出 | 已完成 | R1/R2已红绿修复；独立复审通过，全量及相关race/vet通过 |
+ | 3 页面与图表 | 已完成 | R1正式红→绿且定向复审通过；4组乱序、原17组及旧6组回归通过 |
+-| 4 集成与交付 | 待独立终审 | v11迁移/完整bundle恢复及原Cookie再次CAS通过；新增后全量/备份race/vet/npm/三平台编译通过；45组UI通过，Linux包内容/SHA已验 |
++| 4 集成与交付 | 最终修复已验收，待定向复审 | 主修复稳定版45及最终7+ordering4通过；R1已实现并验收，待唯一独立定向复审 |
+ 
+ 起飞前接口核对：
+ 
+@@ -41,3 +41,11 @@
+ Task 3: complete — R1定向复审ADDRESSED，无修复新增破坏，规格及质量通过；Task1/2跨任务边界由已通过后端审查和Task4集成覆盖。Task3临时服务3833已正常关闭，退出0。
+ 
+ Task 4: implementation ready, pending independent final review — docs/personal-center-task4-report.md；逐条覆盖矩阵 task4-coverage.md；task4-results.json 与 root-precheck 记录最新全量/恢复/race/vet/构建/45组真实UI；task4-package-manifest.json 记录Linux包18文件、无DB/密钥/备份/fixture及SHA。服务42574已正常关闭exit0，未提交/推送/部署。根代理安排唯一任务及宽范围终审，不将全部功能标记完成。
++
++2026-10-06 Final review: 0 Critical / 1 Important / 0 Minor — docs/personal-center-final-review.md，唯一R1为同浏览器另一标签切换Cookie账号后，旧表单可写入新账号（revision相同）。进入一次完整最终修复及定向复审，不重做已完成任务。
++
++Final fix: Ruling: 页面预期账号可作为拒绝请求的前提，由服务器与已验证Cookie身份比较；不得用它选择查询用户，不向ProfileUpdate添加身份字段 — 解决跨标签错误账户写入，同时保持既有鉴权和完整字段合同 — 代价为额外请求前提与新旧客户端兼容回归；补共享Cookie双页测试及无前提既有API兼容验证。
++
++Final fix: Ruling: 携带页面身份前提的现代logout只撤销已验证token，不发送删除共享Cookie的Set-Cookie；无前提旧API保留原删除Cookie行为 — 避免旧A退出响应迟到删除后来B登录Cookie，认证仍以服务端会话撤销为准 — 代价为现代客户端退出后可能保留无效HttpOnly Cookie至过期/下次登录，增加撤销后401与迟到退出不影响B的回归；无效token不能继续认证，不保存新凭据。
++
++Final fix wave1: implemented and verified, pending independent focused review — docs/personal-center-final-fix-report.md；原R1真实双标签红→绿，Cookie主体前提统一拒绝；迟到409/改密/撤销/退出与只退出通知保留输入边界已补。主修复稳定版原45通过，最后仅known-stale分支调整后最终7+ordering4通过，Go全量/相关race/vet/npm/三平台编译通过。新本地包及sealed manifest/results/diff独立封存，旧包历史保留；全部自有服务正常关闭exit0。原最终报告不改，唯一独立定向复审由根安排，不标最终complete，未提交/推送/部署。
+diff --git a/test-artifacts/personal_center_regression.py b/test-artifacts/personal_center_regression.py
+--- a/test-artifacts/personal_center_regression.py
++++ b/test-artifacts/personal_center_regression.py
+@@ -1,5 +1,5 @@
+ """Real browser personal-center regression against an isolated service only.
+-Usage: python3 test-artifacts/personal_center_regression.py BASE [ISOLATED_DB] [--red|--profile-ordering]
++Usage: python3 test-artifacts/personal_center_regression.py BASE [ISOLATED_DB] [--red|--profile-ordering|--cross-tab-account|--late-identity-conflict|--late-security-password|--late-security-revoke|--late-current-logout]
+ """
+ import datetime, json, sqlite3, sys, time
+ from pathlib import Path
+@@ -8,6 +8,12 @@
+ base = sys.argv[1].rstrip('/')
+ red = '--red' in sys.argv
+ profile_ordering_only = '--profile-ordering' in sys.argv
++cross_tab_only = '--cross-tab-account' in sys.argv
++late_identity = '--late-identity-conflict' in sys.argv
++late_password = '--late-security-password' in sys.argv
++late_revoke = '--late-security-revoke' in sys.argv
++late_logout = '--late-current-logout' in sys.argv
++known_logout = '--notified-only-logout' in sys.argv
+ output = Path('test-artifacts/personal-center')
+ output.mkdir(exist_ok=True)
+ report = {'checks': [], 'console_errors': []}
+@@ -31,6 +37,190 @@
+     password = 'personal-test-password'
+     assert api('/auth/register','POST',{'username':username,'password':password})['status']==201
+     assert api('/auth/login','POST',{'username':username,'password':password})['status']==200
++
++    if known_logout:
++        page.goto(base+'/account');page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        owner=api('/auth/me')['body']['id']
++        page.get_by_label('昵称',exact=True).fill('A退出通知后保留输入')
++        other=context.new_page();other.goto(base+'/account')
++        other.get_by_role('button',name='退出',exact=True).click()
++        expect(other).to_have_url(base+'/login')
++        expect(page.get_by_role('alert').filter(has_text='登录账户已变化').first).to_be_visible()
++        sent=[]
++        page.on('request',lambda r:sent.append({'method':r.method,'url':r.url}) if '/api/account/profile' in r.url or '/api/account/export' in r.url else None)
++        page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++        page.wait_for_timeout(100)
++        evidence={'requests':sent,'url_after_save':page.url}
++        (output/'final-fix-known-logout-results.json').write_text(json.dumps(evidence,ensure_ascii=False,indent=2));print(json.dumps(evidence,ensure_ascii=False,indent=2))
++        assert not sent, 'known logout page still sent a profile request and could lose input via401'
++        expect(page.get_by_label('昵称',exact=True)).to_have_value('A退出通知后保留输入')
++        page.get_by_role('button',name='放弃修改并重载',exact=True).click()
++        page.get_by_role('button',name='下载 CSV',exact=True).click()
++        page.evaluate("owner=>window.dispatchEvent(new CustomEvent('session-expired',{detail:{kind:'user',expectedUser:owner}}))",owner)
++        page.wait_for_timeout(100)
++        assert not sent
++        expect(page).to_have_url(base+'/account')
++        expect(page.get_by_label('昵称',exact=True)).to_have_value('A退出通知后保留输入')
++        report['checks'].append('real other-tab logout notification preserves old A input: save/reload/CSV send no requests; late background401 cannot redirect known-stale page')
++        (output/'final-fix-known-logout-results.json').write_text(json.dumps({**report,'requests':sent,'url_after_save':page.url},ensure_ascii=False,indent=2));print(json.dumps(report,ensure_ascii=False,indent=2))
++        browser.close();db.close();raise SystemExit(0)
++
++    if late_identity or late_password or late_revoke or late_logout:
++        other=context.new_page();other.goto(base+'/login')
++        bob=username+'_b'
++        assert api('/auth/register','POST',{'username':bob,'password':password},other)['status']==201
++        page.goto(base+'/account')
++        page.get_by_role('tab',name='账户安全' if late_password or late_revoke else '资料与偏好',exact=True).click()
++        held=[]
++        if late_password:
++            def hold(route): held.append((route,route.fetch()))
++            page.route('**/api/auth/password',hold)
++            page.get_by_label('当前密码',exact=True).fill(password)
++            page.get_by_label('新密码',exact=True).fill(password+'-next')
++            page.get_by_label('确认新密码',exact=True).fill(password+'-next')
++            page.get_by_role('button',name='修改密码',exact=True).click()
++            for _ in range(100):
++                if held: break
++                page.wait_for_timeout(100)
++            assert len(held)==1 and held[0][1].status==200
++        if late_revoke:
++            def hold(route): held.append((route,route.fetch()))
++            page.route('**/api/account/sessions/revoke-others',hold)
++            page.once('dialog',lambda dialog:dialog.accept())
++            page.get_by_role('button',name='退出其他会话',exact=True).click()
++            for _ in range(100):
++                if held: break
++                page.wait_for_timeout(100)
++            assert len(held)==1 and held[0][1].status==200
++        if late_logout:
++            def hold(route): held.append((route,route.fetch()))
++            page.route('**/api/auth/logout',hold)
++            page.get_by_role('button',name='退出',exact=True).click()
++            for _ in range(100):
++                if held: break
++                page.wait_for_timeout(100)
++            assert len(held)==1 and held[0][1].status==200
++        assert api('/auth/login','POST',{'username':bob,'password':password},other)['status']==200
++        bp=api('/account/profile',tab=other)['body']
++        keys=['nickname','bio','avatar_id','daily_questions','daily_minutes','exam_name','exam_date','default_limit','default_module','reading_size','revision']
++        update={k:bp[k] for k in keys};update.update(nickname='B已确认资料',avatar_id=5,reading_size=20,default_limit=50)
++        assert api('/account/profile','PUT',update,other)['status']==200
++        if late_identity:
++            def hold(route):
++                if route.request.method=='PUT': held.append((route,route.fetch()))
++                else: route.continue_()
++            page.route('**/api/account/profile',hold)
++            page.get_by_label('昵称',exact=True).fill('A迟到冲突')
++            page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++            page.wait_for_timeout(100)
++            assert len(held)==1 and held[0][1].status==409
++        # Only navigation uses a fault-injected 401. The held 409 / password
++        # success is a real completed HTTP request, not a mocked business result.
++        page.route('**/api/account/export?days=30',lambda route:route.fulfill(status=401,content_type='application/json',body=json.dumps({'error':'验收：旧页面会话失效'})))
++        if late_password or late_revoke or late_logout:
++            page.evaluate("window.dispatchEvent(new CustomEvent('session-expired',{detail:'user'}))")
++        else:
++            page.get_by_role('button',name='下载 CSV',exact=True).click()
++        expect(page).to_have_url(base+'/login?redirect=/account')
++        page.unroute('**/api/account/export?days=30')
++        page.get_by_label('用户名',exact=True).fill(bob);page.get_by_label('密码',exact=True).fill(password)
++        page.get_by_role('button',name='登录',exact=True).click()
++        expect(page.get_by_role('tab',name='学习总览',exact=True)).to_be_visible()
++        expect(page.locator('.topbar-user .pc-avatar')).to_have_class('avatar pc-avatar pc-avatar-5')
++        followups=[]
++        page.route('**/api/account/sessions?*',lambda route:(followups.append(route.request.headers.get('x-gk-expected-user')),route.continue_()))
++        route,response=held.pop();route.fulfill(response=response)
++        page.wait_for_timeout(200)
++        evidence={'held_status':response.status,'url_after_release':page.url,'identity_alerts':page.get_by_role('alert').filter(has_text='登录账户已变化').count(),'topbar':page.locator('.topbar-user').text_content() if page.locator('.topbar-user').count() else None,'session_followups':followups,'current_cookie_status':api('/auth/me',tab=other)['status']}
++        name='final-fix-late-password' if late_password else 'final-fix-late-revoke' if late_revoke else 'final-fix-late-logout' if late_logout else 'final-fix-late-identity'
++        (output/(name+'-results.json')).write_text(json.dumps(evidence,ensure_ascii=False,indent=2))
++        print(json.dumps(evidence,ensure_ascii=False,indent=2))
++        assert evidence['current_cookie_status']==200, 'late A logout response deleted valid B Cookie'
++        expect(page).to_have_url(base+'/account')
++        assert not followups, 'old security callback issued a session reload after B login'
++        assert evidence['identity_alerts']==0, 'late A failure invalidated current B identity'
++        expect(page.locator('.topbar-user')).to_contain_text('B已确认资料')
++        expect(page.locator('.topbar-user .pc-avatar')).to_have_class('avatar pc-avatar pc-avatar-5')
++        page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        expect(page.get_by_label('练习正文字号',exact=True)).to_have_value('20')
++        expect(page.get_by_label('默认题量',exact=True)).to_have_value('50')
++        report['checks'].append('real delayed A '+('password success' if late_password else 'revoke-others success' if late_revoke else 'logout success' if late_logout else 'account_changed 409')+' after B login cannot invalidate B identity/profile/preferences or redirect')
++        (output/(name+'-results.json')).write_text(json.dumps({**report,**evidence},ensure_ascii=False,indent=2))
++        print(json.dumps(report,ensure_ascii=False,indent=2))
++        browser.close();db.close();raise SystemExit(0)
++
++    if cross_tab_only:
++        other=context.new_page()
++        other.goto(base+'/login')
++        report['shared_cookie_cases']=[]
++        for notified in (False,True):
++            bob=username+('_n' if notified else '_s')
++            assert api('/auth/register','POST',{'username':bob,'password':password},other)['status']==201
++            assert api('/auth/login','POST',{'username':username,'password':password},other)['status']==200
++            page.goto(base+'/account')
++            page.get_by_role('tab',name='资料与偏好',exact=True).click()
++            page.get_by_label('昵称',exact=True).fill('A跨标签未保存输入')
++            a=api('/account/profile')['body']
++            owner=api('/auth/me')['body']['id']
++            # Real shared browser Cookie switch. Silent case uses raw login so
++            # there is no BroadcastChannel event or mocked response/preflight.
++            assert api('/auth/logout','POST',tab=other)['status']==200
++            if notified:
++                other.goto(base+'/login')
++                other.get_by_label('用户名',exact=True).fill(bob)
++                other.get_by_label('密码',exact=True).fill(password)
++                other.get_by_role('button',name='登录',exact=True).click()
++                expect(other.locator('.topbar-user')).to_contain_text(bob)
++                expect(page.get_by_role('alert').filter(has_text='登录账户已变化').first).to_be_visible()
++            else:
++                assert api('/auth/login','POST',{'username':bob,'password':password},other)['status']==200
++                assert page.get_by_role('alert').filter(has_text='登录账户已变化').count()==0
++            before=api('/account/profile',tab=other)['body']
++            assert before['revision']==a['revision']==0
++            issued=[]
++            def capture(request):
++                if request.url.endswith('/api/account/profile') and request.method=='PUT': issued.append(request)
++            page.on('request',capture)
++            response=None
++            if notified:
++                page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++                page.wait_for_timeout(100)
++                assert not issued, 'known account change should refuse locally before PUT'
++            else:
++                with page.expect_response(lambda r:r.url.endswith('/api/account/profile') and r.request.method=='PUT') as pending:
++                    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++                response=pending.value
++            page.remove_listener('request',capture)
++            after=api('/account/profile',tab=other)['body']
++            case={'notified':notified,'a_revision':a['revision'],'b_before':before,'b_after':after,'b_polluted':after!=before,'put_status':response.status if response else None,'expected_owner':response.request.headers.get('x-gk-expected-user') if response else None,'a_owner':owner,'local_refusal':notified}
++            report['shared_cookie_cases'].append(case)
++            (output/'final-fix-cross-tab-results.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
++            print(json.dumps(case,ensure_ascii=False,indent=2))
++            assert after==before, 'R1: old A page polluted B profile via shared Cookie and equal revision'
++            if not notified:
++                assert response.status==409 and case['expected_owner']==str(owner)
++                assert response.json()['code']=='account_changed'
++            expect(page.get_by_role('alert').filter(has_text='登录账户已变化').first).to_be_visible()
++            expect(page.get_by_label('昵称',exact=True)).to_have_value('A跨标签未保存输入')
++            assert api('/auth/me',tab=other)['body']['username']==bob
++            page.get_by_role('button',name='退出',exact=True).click()
++            expect(page.get_by_label('昵称',exact=True)).to_have_value('A跨标签未保存输入')
++            assert api('/auth/me',tab=other)['status']==200
++            export_requests=[]
++            def export_capture(request):
++                if '/api/account/export?' in request.url: export_requests.append(request)
++            page.on('request',export_capture)
++            page.get_by_role('button',name='下载 CSV',exact=True).click()
++            page.wait_for_timeout(100)
++            page.remove_listener('request',export_capture)
++            assert not export_requests, 'known stale CSV should refuse locally'
++            expect(page.locator('.pc-export').get_by_role('alert')).to_contain_text('登录账户已变化')
++            report['checks'].append(('notified' if notified else 'silent')+' real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie')
++        browser.close();db.close()
++        assert not report['console_errors'], report['console_errors']
++        (output/'final-fix-cross-tab-results.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
++        print(json.dumps(report,ensure_ascii=False,indent=2))
++        raise SystemExit(0)
+ 
+     def profile_ordering_regression():
+         held=[];calls=[0]
+diff --git a/test-artifacts/personal-center/task4-coverage.md b/test-artifacts/personal-center/task4-coverage.md
+--- a/test-artifacts/personal-center/task4-coverage.md
++++ b/test-artifacts/personal-center/task4-coverage.md
+@@ -75,3 +75,19 @@
+ | §11 排除外部认证/上传/私信/支付/公共排名/付费AI；源码本地交付 | 本任务范围及Task1–3审查 | 未提交/推送/部署 |
+ 
+ 正式环境边界：未运行正式 DB/实际密钥迁移，未验线上 HTTPS/代理配置/压力/长时间运行/异机完整恢复，未验 Windows/macOS 原生运行、其他浏览器及真实读屏器。跨编译不等于原生运行；临时库恢复不等于生产大库恢复演练。最终独立终审状态由根代理另行记录，矩阵不替代终审。
++
++## 2026-10-06 最终修复增量覆盖
++
++旧矩阵与45组证据属于Task4历史版；以下补最终审查R1，不以旧版通过推断本修复通过。最终独立定向复审仍由根代理安排。
++
++| 要求/根因 | 新验证 | 边界 |
++|---|---|---|
++| 共享Cookie换到B、旧A表单和B revision相同仍不可写B | 正式 `--cross-tab-account` silent/notified两页同context；silent真实PUT固定owner header/409，notified本地无PUT，B全字段不变 | 红灯B确被污染，绿灯两条；无PUT/Cookie/服务器业务替身 |
++| 页前提只拒绝、不选用户；兼容原API | ExpectedIdentityRejectsBeforeEffects真实HTTP/SQLite，11路径、匹配/不符/非法/无前提；匿名401/Origin403/admin独立 | Cookie唯一鉴权，ProfileUpdate不加身份字段 |
++| 资料读取、CSV、改密、会话撤销、统计重算的同根因 | 上述HTTP临时B已提交CSV、两会话、密码摘要、资料revision和统计sentinel | B不泄漏/不改变；全部业务前409 |
++| 新owner不受旧owner迟到响应影响 | 正式 `--late-identity-conflict/--late-security-password/--late-security-revoke` | 业务响应route.fetch真实完成，导航401/事件为明确故障注入；B偏好/状态保留，无旧会话续读 |
++| 现代logout晚到不能删除后来B Cookie；旧API兼容 | GuardedLogoutDoesNotDeleteLaterCookie HTTP红绿；正式 `--late-current-logout`真实200晚到Bme200 | 现代token已撤销后401，无Set-Cookie；旧无header仍删除Cookie |
++| 原功能完整集成 | 稳定主修复版原45由根代理纯批准脚本重跑；最后仅known-stale分支调整，最终补7+ordering4，独立final-fix-*结果 | 原17/ordering4/旧18/旧6断言不放宽；历史task4-*保持 |
++| 已收到只退出通知时仍保留未保存输入 | `--notified-only-logout`真实红绿，最终save/reload/CSV无网络，后台401不跳转 | 主修复稳定45后唯一狭窄stale分支改动；最终定向7+ordering4验证，未冒称再次全45 |
++| 新二进制/嵌入前端/说明一致 | 最终Go全量/相关race/vet/npm/三平台编译、`make -o web release`、audit `--final-fix` | 新本地包与旧封存包分开，报告不嵌自身包SHA；待独立复审 |
++
+diff --git a/test-artifacts/personal-center/task4-package-audit.py b/test-artifacts/personal-center/task4-package-audit.py
+--- a/test-artifacts/personal-center/task4-package-audit.py
++++ b/test-artifacts/personal-center/task4-package-audit.py
+@@ -2,12 +2,16 @@
+ import hashlib
+ import json
+ import tarfile
++import sys
+ from pathlib import Path
+ 
+ root = Path(__file__).resolve().parents[2]
+ archive = root / "var/gk-linux-amd64.tar.gz"
+ allowed_roots = {"README.md", "第一轮修复文档.md", "第二轮修复文档.md", "第二轮上线就绪审查报告.md", "gk", "deploy", "taxonomy", "docs"}
+ required = {"gk", "docs/personal-center.md", "docs/personal-center-task4-report.md", "docs/api-design.md", "docs/deployment-2c4g.md", "README.md"}
++final_fix = '--final-fix' in sys.argv
++if final_fix:
++    required.add('docs/personal-center-final-fix-report.md')
+ files = {}
+ with tarfile.open(archive, "r:gz") as tar:
+     for member in tar.getmembers():
+@@ -22,6 +26,8 @@
+             if member.name == "gk":
+                 assert payload.startswith(b"\x7fELF"), "not a Linux ELF"
+                 assert "个人中心".encode() in payload, "personal-center frontend not embedded"
++                if final_fix:
++                    assert b'X-GK-Expected-User' in payload and b'account_changed' in payload, 'identity precondition/frontend absent'
+                 expected = (root / "var/release/gk").read_bytes()
+             else:
+                 expected = (root / member.name).read_bytes()
+@@ -29,6 +35,6 @@
+             files[member.name] = {"size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+ assert required <= files.keys(), required - files.keys()
+ result = {"archive": str(archive.relative_to(root)), "size": archive.stat().st_size, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "file_count": len(files), "files": files, "checks": {"allowed_members_only": True, "no_database_key_backup_or_fixture": True, "documents_match_workspace": True, "linux_elf_with_personal_frontend": True}, "note": "deploy/backup.sh and backup systemd templates are source configuration, not backup data."}
+-destination = root / "test-artifacts/personal-center/task4-package-manifest.json"
++destination = root / ("test-artifacts/personal-center/final-fix-package-manifest.json" if final_fix else "test-artifacts/personal-center/task4-package-manifest.json")
+ destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+ print(json.dumps({k: v for k, v in result.items() if k != "files"}, ensure_ascii=False, indent=2))
+diff --git a/internal/serve/identity.go b/internal/serve/identity.go
+--- /dev/null
++++ b/internal/serve/identity.go
+@@ -0,0 +1,29 @@
++package serve
++
++import (
++	"net/http"
++	"strconv"
++)
++
++// This optional page precondition can only reject. The authenticated Cookie
++// principal, never this header, continues to select every business query.
++func expectedUserMatches(w http.ResponseWriter, r *http.Request, userID int64) bool {
++	values, present := r.Header[http.CanonicalHeaderKey("X-GK-Expected-User")]
++	if !present {
++		return true
++	}
++	if len(values) != 1 || values[0] != strconv.FormatInt(userID, 10) {
++		if len(values) != 1 {
++			writeErr(w, 400, "无效的页面账户前提")
++			return false
++		}
++		expected, err := strconv.ParseInt(values[0], 10, 64)
++		if err != nil || expected <= 0 || values[0] != strconv.FormatInt(expected, 10) {
++			writeErr(w, 400, "无效的页面账户前提")
++			return false
++		}
++		writeJSON(w, 409, map[string]any{"code": "account_changed", "error": "登录账户已变化，请记录未保存输入后重新进入个人中心"})
++		return false
++	}
++	return true
++}
+diff --git a/internal/serve/personal_identity_test.go b/internal/serve/personal_identity_test.go
+--- /dev/null
++++ b/internal/serve/personal_identity_test.go
+@@ -0,0 +1,170 @@
++package serve
++
++import (
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++)
++
++// Removing the Cookie-verified identity precondition would disclose B's data
++// and mutate B's profile/password/sessions via the stale A page.
++func TestPersonalExpectedIdentityRejectsBeforeEffects(t *testing.T) {
++	s, db := fixture(t)
++	h := s.Routes()
++	account(t, h, "identity_a")
++	bob := account(t, h, "identity_b")
++	wLogin, _ := requestTest(t, h, "POST", "/api/auth/login", `{"username":"identity_b","password":"testpassword"}`, nil)
++	if wLogin.Code != 200 {
++		t.Fatal(wLogin.Body.String())
++	}
++	_, created := requestTest(t, h, "POST", "/api/practice/sessions", `{"kind":"single","spec":{"question_ids":[1]}}`, bob)
++	sid := int(created["session_id"].(float64))
++	wSubmit, _ := requestTest(t, h, "POST", fmt.Sprintf("/api/practice/sessions/%d/submit", sid), `{"draft_revision":0,"answers":[{"question_id":1,"answer":"H","duration_ms":1000}]}`, bob)
++	if wSubmit.Code != 200 {
++		t.Fatal(wSubmit.Body.String())
++	}
++	if _, err := db.Exec(`DELETE FROM user_concept_stat WHERE user_id=2`); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := db.Exec(`INSERT INTO user_concept_stat(user_id,concept_id,answered,correct,mastery,updated_at) SELECT 2,id,7,3,42,'synthetic-marker' FROM concept LIMIT 1`); err != nil {
++		t.Fatal(err)
++	}
++	_, sessions := requestTest(t, h, "GET", "/api/account/sessions", "", bob)
++	id := sessions["items"].([]any)[0].(map[string]any)["public_id"].(string)
++	var hash string
++	if err := db.QueryRow(`SELECT password_hash FROM app_user WHERE username='identity_b'`).Scan(&hash); err != nil {
++		t.Fatal(err)
++	}
++	for _, tc := range []struct{ method, path, body string }{
++		{"PUT", "/api/account/profile", profileBody(t, map[string]any{"nickname": "old A input"})},
++		{"GET", "/api/account/profile", ""}, {"GET", "/api/account/dashboard", ""},
++		{"GET", "/api/account/export?days=all", ""}, {"GET", "/api/account/sessions", ""},
++		{"POST", "/api/auth/password", `{"current_password":"testpassword","password":"new-test-password"}`},
++		{"POST", "/api/account/sessions/revoke-others", `{}`},
++		{"DELETE", "/api/account/sessions/" + id, ""},
++		{"POST", "/api/practice/stats/rebuild", `{}`},
++		{"POST", "/api/account/review/wrongbook", `{}`},
++		{"POST", "/api/auth/logout", `{}`},
++	} {
++		t.Run(tc.method+tc.path, func(t *testing.T) {
++			r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
++			r.Header.Set("Origin", "http://example.com")
++			r.Header.Set("Content-Type", "application/json")
++			r.Header.Set("X-GK-Expected-User", "1")
++			r.AddCookie(bob)
++			w := httptest.NewRecorder()
++			h.ServeHTTP(w, r)
++			if w.Code != 409 || !strings.Contains(w.Body.String(), `"code":"account_changed"`) {
++				t.Fatalf("expected refusal, got %d %s", w.Code, w.Body.String())
++			}
++			if len(w.Result().Cookies()) != 0 {
++				t.Fatal("refusal replaced valid B Cookie")
++			}
++		})
++	}
++	w, profile := requestTest(t, h, "GET", "/api/account/profile", "", bob)
++	if w.Code != 200 || profile["nickname"] != "" || profile["revision"] != float64(0) {
++		t.Fatal("B profile changed", w.Code, profile)
++	}
++	var stat int
++	if err := db.QueryRow(`SELECT COUNT(*) FROM user_concept_stat WHERE user_id=2 AND answered=7 AND updated_at='synthetic-marker'`).Scan(&stat); err != nil || stat != 1 {
++		t.Fatal("B statistics changed", stat, err)
++	}
++	var after string
++	if err := db.QueryRow(`SELECT password_hash FROM app_user WHERE username='identity_b'`).Scan(&after); err != nil || after != hash {
++		t.Fatal("B password changed", err)
++	}
++	w, remaining := requestTest(t, h, "GET", "/api/account/sessions", "", bob)
++	if w.Code != 200 || remaining["total"] != sessions["total"] {
++		t.Fatal("B sessions changed", w.Code, remaining)
++	}
++	// No precondition remains compatible; matching B precondition only permits B.
++	w, _ = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, nil), bob)
++	if w.Code != 200 {
++		t.Fatal("legacy API broken", w.Code, w.Body.String())
++	}
++	for _, expected := range []string{"2", "bad", "", "01", "1,2"} {
++		r := httptest.NewRequest(http.MethodGet, "/api/account/profile", nil)
++		r.AddCookie(bob)
++		r.Header["X-Gk-Expected-User"] = []string{expected}
++		w := httptest.NewRecorder()
++		h.ServeHTTP(w, r)
++		want := 400
++		if expected == "2" {
++			want = 200
++		}
++		if expected == "2" && !strings.Contains(w.Body.String(), `"username":"identity_b"`) {
++			t.Fatal("precondition selected a different principal", w.Body.String())
++		}
++		if w.Code != want {
++			t.Fatalf("precondition %q: %d %s", expected, w.Code, w.Body.String())
++		}
++	}
++	w, _ = requestTest(t, h, "POST", "/api/auth/logout", `{}`, bob)
++	if w.Code != 200 {
++		t.Fatal("legacy logout broken", w.Code)
++	}
++}
++
++// Preconditions must not replace authentication, Origin or administrator boundaries.
++func TestPersonalExpectedIdentityAuthenticationAndOrigin(t *testing.T) {
++	s, _ := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "precondition_origin")
++	for _, tc := range []struct {
++		path, origin, expected string
++		authenticated          bool
++		want                   int
++	}{
++		{"/api/account/profile", "http://example.com", "999", false, 401},
++		{"/api/auth/logout", "http://example.com", "999", false, 401},
++		{"/api/account/profile", "https://evil.example", "999", true, 403},
++		{"/api/auth/logout", "https://evil.example", "999", true, 403},
++		{"/api/admin/logout", "http://example.com", "bad", false, 200},
++	} {
++		r := httptest.NewRequest("POST", tc.path, strings.NewReader(`{}`))
++		if tc.path == "/api/account/profile" {
++			r.Method = "PUT"
++		}
++		r.Header.Set("Origin", tc.origin)
++		r.Header.Set("Content-Type", "application/json")
++		r.Header.Set("X-GK-Expected-User", tc.expected)
++		if tc.authenticated {
++			r.AddCookie(cookie)
++		}
++		w := httptest.NewRecorder()
++		h.ServeHTTP(w, r)
++		if w.Code != tc.want {
++			t.Fatalf("%+v: %d %s", tc, w.Code, w.Body.String())
++		}
++	}
++}
++
++// A guarded logout must revoke its own token without a delayed Set-Cookie
++// deleting a later login's Cookie. Legacy clients retain Cookie deletion.
++func TestPersonalGuardedLogoutDoesNotDeleteLaterCookie(t *testing.T) {
++	s, _ := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "guarded_logout")
++	r := httptest.NewRequest("POST", "/api/auth/logout", strings.NewReader(`{}`))
++	r.AddCookie(cookie)
++	r.Header.Set("Origin", "http://example.com")
++	r.Header.Set("Content-Type", "application/json")
++	r.Header.Set("X-GK-Expected-User", "1")
++	w := httptest.NewRecorder()
++	h.ServeHTTP(w, r)
++	if w.Code != 200 || len(w.Result().Cookies()) != 0 {
++		t.Fatalf("guarded logout could delete later Cookie: %d %v", w.Code, w.Result().Cookies())
++	}
++	w, _ = requestTest(t, h, "GET", "/api/auth/me", "", cookie)
++	if w.Code != 401 {
++		t.Fatal("guarded logout token still authenticates", w.Code)
++	}
++	legacy := account(t, h, "legacy_logout")
++	w, _ = requestTest(t, h, "POST", "/api/auth/logout", `{}`, legacy)
++	if w.Code != 200 || len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].MaxAge != -1 {
++		t.Fatal("legacy logout no longer deletes Cookie", w.Code, w.Result().Cookies())
++	}
++}
+diff --git a/docs/personal-center-final-fix-report.md b/docs/personal-center-final-fix-report.md
+--- /dev/null
++++ b/docs/personal-center-final-fix-report.md
+@@ -0,0 +1,41 @@
++# 个人中心最终修复记录
++
++日期：2026-10-06。范围：最终审查唯一 Important R1 及同一页面身份绑定的请求/迟到回调边界。状态：实现及本地验收通过，待根代理安排唯一独立定向复审；不标记完整功能最终完成。原最终审查报告保持不变。未提交、推送、远程部署或操作正式数据库/密钥。
++
++## 根因与修复
++
++完整阅读最终审查 R1、规格/计划/账本与实际调用：同浏览器另一标签把共享 Cookie 从 A 换成 B，旧 A 页面内存与表单仍属于 A。两账户 revision 同为0时，服务器按 Cookie B 的主体处理旧 A 的 PUT，B 的CAS也成功；收到响应后的owner校验只能丢ACK，不能撤回已完成写入。
++
++新增可选 `X-GK-Expected-User` 页面前提。统一 `requireUser` 在 Cookie 验证成功后、业务调用前比较该前提，非法格式400、不符409且 `code=account_changed`；原401、写请求Origin403和既有JSON校验保留。前提只用于拒绝，不能选择查询用户或授予权限；全部业务仍取已验证Cookie的主体。覆盖个人资料/看板/重载、CSV、会话管理、改密、统计重算、复习和其他原普通用户业务，logout在组外单独复用相同边界。ProfileUpdate字段合同未添加用户名/user_id，没有schema、依赖或新凭据。
++
++个人中心与资料/安全/复习组件的API客户端固定于创建该页的原owner；默认普通用户客户端在请求发起时携带当前已验证owner，身份发现和管理员保持独立。跨标签明确登录公告只提示异owner失效，退出/改密公告带发起owner只提示同owner标签；信号不能建立登录身份或给旧表单套新owner。本地401/路由校验失败不广播Cookie退出。账号变化提示保留输入，用户记录后重新进入；不走同账号CAS的重载/自动重发路径。
++
++身份不符/401事件带发起owner，迟到旧A错误不清除当前B偏好。Security成功回调检查页面存活和固定owner，旧改密不能清B身份，旧撤销不能继续读取B会话。App.logout在等待输入保护前固定role/owner，发送和响应均受owner保护；退出失败保留尚未保存输入。
++
++账本Ruling：带前提的现代logout仅撤销已验证token，不发删除Cookie的Set-Cookie，防止晚到A退出响应删除后来B登录Cookie。现代页成功后清理本地身份并发owner限定通知；残留HttpOnly Cookie对应token已失效、不能认证，允许留至过期/下次登录。无header旧API保留原幂等和删除Cookie行为。
++
++## 红绿证据
++
++正式脚本 `test-artifacts/personal_center_regression.py --cross-tab-account` 首次真实红灯exit1：同context双页、A/B revision0，旧A保存后B昵称变为“A跨标签未保存输入”、revision升1。原始JSON封存 `final-fix-cross-tab-red.json`；最初最小用例随后扩为两条正式回归。最终版silent原始fetch换Cookie（无BC信号）及notified另一页真实UI登录均exit0：silent真实旧页PUT包含固定A owner且服务器409，notified保存在本地拒绝、不发PUT；B前后全部字段相同，提示与输入保留，已知stale的CSV/退出拒绝且B Cookie有效。
++
++同根因回调扩展也有真实红灯：迟到A的真实409在B登录后释放会误清B缓存/显示身份变化；迟到A改密真实200会把B跳/login；迟到A logout真实200的删除Cookie响应会令B `/auth/me` 401。分别封存 `final-fix-late-identity-red.json`、`final-fix-late-password-red.json`、`final-fix-late-logout-red.json`。修复后四条 `--late-identity-conflict/--late-security-password/--late-security-revoke/--late-current-logout` exit0，B昵称/头像/20px/50题保持、无错误身份提示或跳转、B Cookie200，旧安全回调没有新会话重载请求。真实HTTP响应通过route.fetch完成后延迟释放；仅切到登录页阶段使用人工session-expired事件或CSV401故障注入，不能把这一导航注入描述为真实服务器认证失败。
++
++新增 `internal/serve/personal_identity_test.go` 使用fixture的真实 `t.TempDir()` SQLite/HTTP路由：Cookie B+expected A在11个读取/副作用路径执行前409，B资料/密码摘要/两份登录会话/统计sentinel不变，真实B已交卷CSV不能泄漏；无前提PUT/logout仍可用、匹配前提只返回B、非法前提400、匿名401/非法Origin403/admin独立。原定向测试红灯明确得到错误资料写入、CSV200和改密200；绿灯三测试通过。Guarded logout另有HTTP红灯（成功仍返回删除Cookie），绿灯验证无Set-Cookie、原token随后401、legacy仍删除Cookie。
++
++命令和退出码见 `test-artifacts/personal-center/final-fix-results.json`，各绿色JSON与红色JSON保留。脚本准备期间三个无效运行单列：合成用户名加长超32字符；首次改密仅等待100ms未完成；三个UI进程并行触及两并行密码计算上限。均修正测试准备/等待/串行运行后重跑，没有放宽产品断言，不计有效产品红灯。
++
++最后补“另一页只退出、尚未登录B”已知stale分支。真实UI退出通知后旧页保存曾发PUT401并跳登录页、丢输入，红灯封 `final-fix-known-logout-red.json`。最终save/reload/CSV本地先检查固定owner与已知失效标记，拒绝且不发网络；已知stale的后台user401不自动跳转，普通active401保持原流程。`--notified-only-logout`绿灯保留输入、请求列表为空，注入迟到后台401也不跳转。
++
++## 验证与交付
++
++- Go最终全量 `go test ./... -count=1` exit0，serve10.572s；最终受影响身份/logout race exit0，serve11.365s。R1主修复阶段核心serve/study/store/setting全race也exit0，serve159.005s；该次早于guarded logout扩展，扩展以最终定向race覆盖，不冒称为扩展后的全核心race。
++- `go vet ./...` exit0，最终前端 `npm run build` exit0，60 modules，1.44s。最后代码嵌入CLI后Linux/Windows/macOS amd64编译均exit0，实际文件类型ELF/PE32+/Mach-O；后两者只交叉编译，没有原生运行。
++- 根代理稳定主修复版原45组（18+6+17+4）全部exit0，四份final-fix-*结果和root-verification保留。此后仅修改已知stale的ProfileForm早期拒绝及router401保留分支，按根裁定最终版补定向7组（双标签2、迟到回调4、只退出通知1）及同账号ordering4，全部exit0；没有宣称原45在这次狭窄分支调整后全部重跑。稳定45版二进制另存 `_work/final-fix-stable45-gk`及SHA，最终编译/包均为最后代码。唯一UI场景合计52组，最终版定向实际11组；`console_errors: []`只代表监听页面pageerror为空，未采集全部console.error/网络错误。
++
++临时服务仅使用 `_work/task3.sqlite`、`task3-synthetic.key`、127.0.0.1:18083，逐次由自有tool session启动并Ctrl-C退出0。原45服务26275与最终20231/94372均已Ctrl-C退出0，所有本次自有服务已关闭；无其他进程操作。隔离库管理员webtester仅为旧18测试重置，没有访问正式数据。
++
++原包/manifest/results保留于 `_work/pre-final-fix-release/`，原Task4的45组和包是历史版本证据，不包含本次修复。新包复用本轮已构建前端，使用 `make -o web release`和audit `--final-fix`，包含最终修复报告共19文件，报告不嵌自身包SHA。新 `final-fix-package-manifest.json`、`final-fix-results.json`和 `_work/final-fix-sealed/`封存快照独立记录，sealed-manifest记录包/证据/diff SHA；不包含运行时DB/密钥/fixture。API、个人说明、部署手册、Task4附录与覆盖矩阵随新包同步更新。
++
++未测边界延续原交付：正式库/真实密钥升级与回滚、线上HTTPS/实际可信代理/压力/长时间运行、异机恢复、Windows/macOS原生运行、其他浏览器与真实读屏器。本轮真实本地HTTP、合成SQLite和Chrome条件化回调不提供这些生产证据。无header旧客户端/已打开旧缓存页面仍按兼容合同，发布新前后端后需刷新并重新进入页面。反向代理必须透传预期身份header且不能用它授权，正式代理仍未测；部署恢复节明确旧快照恢复可能恢复会话而令残留Cookie再有效，正式恢复按策略统一撤销历史会话重新登录，没有改恢复实现或正式操作。
++
++修复diff以分派前60源/测试/文档快照为基线，新增身份源码/测试/报告及证据另纳入；包审计辅助脚本不在60清单，其首次完整读取的原文通过精确可逆变更复原为support-before补充比较，未用Git HEAD混入旧修改。`personal-final-fix.diff`供定向复审，seal manifest因记录diff SHA单列以避免自引用。账本仅标待定向复审，原最终审查报告不改。
+diff --git a/test-artifacts/personal-center/final-fix-cross-tab-red.json b/test-artifacts/personal-center/final-fix-cross-tab-red.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-cross-tab-red.json
+@@ -0,0 +1,40 @@
++{
++  "checks": [],
++  "console_errors": [],
++  "shared_cookie": {
++    "a_revision": 0,
++    "b_before": {
++      "username": "personal_1791244847705689574_b",
++      "nickname": "",
++      "bio": "",
++      "avatar_id": 0,
++      "created_at": "2026-10-06T00:00:48Z",
++      "updated_at": "2026-10-06T00:00:48Z",
++      "daily_questions": 20,
++      "daily_minutes": 30,
++      "exam_name": "",
++      "exam_date": "",
++      "default_limit": 20,
++      "default_module": "",
++      "reading_size": 16,
++      "revision": 0
++    },
++    "b_after": {
++      "username": "personal_1791244847705689574_b",
++      "nickname": "A跨标签未保存输入",
++      "bio": "",
++      "avatar_id": 0,
++      "created_at": "2026-10-06T00:00:48Z",
++      "updated_at": "2026-10-06T00:00:50Z",
++      "daily_questions": 20,
++      "daily_minutes": 30,
++      "exam_name": "",
++      "exam_date": "",
++      "default_limit": 20,
++      "default_module": "",
++      "reading_size": 16,
++      "revision": 1
++    },
++    "b_polluted": true
++  }
++}diff --git a/test-artifacts/personal-center/final-fix-cross-tab-results.json b/test-artifacts/personal-center/final-fix-cross-tab-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-cross-tab-results.json
+@@ -0,0 +1,91 @@
++{
++  "checks": [
++    "silent real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie",
++    "notified real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie"
++  ],
++  "console_errors": [],
++  "shared_cookie_cases": [
++    {
++      "notified": false,
++      "a_revision": 0,
++      "b_before": {
++        "username": "personal_1791246809046988779_s",
++        "nickname": "",
++        "bio": "",
++        "avatar_id": 0,
++        "created_at": "2026-10-06T00:33:29Z",
++        "updated_at": "2026-10-06T00:33:29Z",
++        "daily_questions": 20,
++        "daily_minutes": 30,
++        "exam_name": "",
++        "exam_date": "",
++        "default_limit": 20,
++        "default_module": "",
++        "reading_size": 16,
++        "revision": 0
++      },
++      "b_after": {
++        "username": "personal_1791246809046988779_s",
++        "nickname": "",
++        "bio": "",
++        "avatar_id": 0,
++        "created_at": "2026-10-06T00:33:29Z",
++        "updated_at": "2026-10-06T00:33:29Z",
++        "daily_questions": 20,
++        "daily_minutes": 30,
++        "exam_name": "",
++        "exam_date": "",
++        "default_limit": 20,
++        "default_module": "",
++        "reading_size": 16,
++        "revision": 0
++      },
++      "b_polluted": false,
++      "put_status": 409,
++      "expected_owner": "92",
++      "a_owner": 92,
++      "local_refusal": false
++    },
++    {
++      "notified": true,
++      "a_revision": 0,
++      "b_before": {
++        "username": "personal_1791246809046988779_n",
++        "nickname": "",
++        "bio": "",
++        "avatar_id": 0,
++        "created_at": "2026-10-06T00:33:35Z",
++        "updated_at": "2026-10-06T00:33:35Z",
++        "daily_questions": 20,
++        "daily_minutes": 30,
++        "exam_name": "",
++        "exam_date": "",
++        "default_limit": 20,
++        "default_module": "",
++        "reading_size": 16,
++        "revision": 0
++      },
++      "b_after": {
++        "username": "personal_1791246809046988779_n",
++        "nickname": "",
++        "bio": "",
++        "avatar_id": 0,
++        "created_at": "2026-10-06T00:33:35Z",
++        "updated_at": "2026-10-06T00:33:35Z",
++        "daily_questions": 20,
++        "daily_minutes": 30,
++        "exam_name": "",
++        "exam_date": "",
++        "default_limit": 20,
++        "default_module": "",
++        "reading_size": 16,
++        "revision": 0
++      },
++      "b_polluted": false,
++      "put_status": null,
++      "expected_owner": null,
++      "a_owner": 92,
++      "local_refusal": true
++    }
++  ]
++}diff --git a/test-artifacts/personal-center/final-fix-final-ordering4-results.json b/test-artifacts/personal-center/final-fix-final-ordering4-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-final-ordering4-results.json
+@@ -0,0 +1,9 @@
++{
++  "checks": [
++    "same-user old initial profile GET cannot revert successful PUT, form/topbar/preferences/revision; next PUT succeeds",
++    "same-user late dashboard profile keeps newest profile/goals and next PUT succeeds",
++    "auth.loadProfile late GET returns confirmed newer cache, preserves topbar/defaults and next PUT succeeds",
++    "older successful PUT ACK cannot lower newer same-user GET confirmation; pending dirty input protected, newest form/cache retained and next PUT succeeds"
++  ],
++  "console_errors": []
++}diff --git a/test-artifacts/personal-center/final-fix-known-logout-red.json b/test-artifacts/personal-center/final-fix-known-logout-red.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-known-logout-red.json
+@@ -0,0 +1,9 @@
++{
++  "requests": [
++    {
++      "method": "PUT",
++      "url": "http://127.0.0.1:18083/api/account/profile"
++    }
++  ],
++  "url_after_save": "http://127.0.0.1:18083/login?redirect=/account"
++}diff --git a/test-artifacts/personal-center/final-fix-known-logout-results.json b/test-artifacts/personal-center/final-fix-known-logout-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-known-logout-results.json
+@@ -0,0 +1,8 @@
++{
++  "checks": [
++    "real other-tab logout notification preserves old A input: save/reload/CSV send no requests; late background401 cannot redirect known-stale page"
++  ],
++  "console_errors": [],
++  "requests": [],
++  "url_after_save": "http://127.0.0.1:18083/account"
++}diff --git a/test-artifacts/personal-center/final-fix-late-identity-red.json b/test-artifacts/personal-center/final-fix-late-identity-red.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-late-identity-red.json
+@@ -0,0 +1,6 @@
++{
++  "held_status": 409,
++  "url_after_release": "http://127.0.0.1:18083/account",
++  "identity_alerts": 1,
++  "topbar": "BB已确认资料退出"
++}diff --git a/test-artifacts/personal-center/final-fix-late-identity-results.json b/test-artifacts/personal-center/final-fix-late-identity-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-late-identity-results.json
+@@ -0,0 +1,12 @@
++{
++  "checks": [
++    "real delayed A account_changed 409 after B login cannot invalidate B identity/profile/preferences or redirect"
++  ],
++  "console_errors": [],
++  "held_status": 409,
++  "url_after_release": "http://127.0.0.1:18083/account",
++  "identity_alerts": 0,
++  "topbar": "BB已确认资料退出",
++  "session_followups": [],
++  "current_cookie_status": 200
++}diff --git a/test-artifacts/personal-center/final-fix-late-logout-red.json b/test-artifacts/personal-center/final-fix-late-logout-red.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-late-logout-red.json
+@@ -0,0 +1,8 @@
++{
++  "held_status": 200,
++  "url_after_release": "http://127.0.0.1:18083/login",
++  "identity_alerts": 0,
++  "topbar": null,
++  "session_followups": [],
++  "current_cookie_status": 401
++}diff --git a/test-artifacts/personal-center/final-fix-late-logout-results.json b/test-artifacts/personal-center/final-fix-late-logout-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-late-logout-results.json
+@@ -0,0 +1,12 @@
++{
++  "checks": [
++    "real delayed A logout success after B login cannot invalidate B identity/profile/preferences or redirect"
++  ],
++  "console_errors": [],
++  "held_status": 200,
++  "url_after_release": "http://127.0.0.1:18083/account",
++  "identity_alerts": 0,
++  "topbar": "BB已确认资料退出",
++  "session_followups": [],
++  "current_cookie_status": 200
++}diff --git a/test-artifacts/personal-center/final-fix-late-password-red.json b/test-artifacts/personal-center/final-fix-late-password-red.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-late-password-red.json
+@@ -0,0 +1,6 @@
++{
++  "held_status": 200,
++  "url_after_release": "http://127.0.0.1:18083/login",
++  "identity_alerts": 0,
++  "topbar": null
++}diff --git a/test-artifacts/personal-center/final-fix-late-password-results.json b/test-artifacts/personal-center/final-fix-late-password-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-late-password-results.json
+@@ -0,0 +1,12 @@
++{
++  "checks": [
++    "real delayed A password success after B login cannot invalidate B identity/profile/preferences or redirect"
++  ],
++  "console_errors": [],
++  "held_status": 200,
++  "url_after_release": "http://127.0.0.1:18083/account",
++  "identity_alerts": 0,
++  "topbar": "BB已确认资料退出",
++  "session_followups": [],
++  "current_cookie_status": 200
++}diff --git a/test-artifacts/personal-center/final-fix-late-revoke-results.json b/test-artifacts/personal-center/final-fix-late-revoke-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-late-revoke-results.json
+@@ -0,0 +1,12 @@
++{
++  "checks": [
++    "real delayed A revoke-others success after B login cannot invalidate B identity/profile/preferences or redirect"
++  ],
++  "console_errors": [],
++  "held_status": 200,
++  "url_after_release": "http://127.0.0.1:18083/account",
++  "identity_alerts": 0,
++  "topbar": "BB已确认资料退出",
++  "session_followups": [],
++  "current_cookie_status": 200
++}diff --git a/test-artifacts/personal-center/final-fix-old18-results.json b/test-artifacts/personal-center/final-fix-old18-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-old18-results.json
+@@ -0,0 +1,30 @@
++{
++  "checks": [
++    "anonymous root redirects to user login",
++    "registration/login and real question bank",
++    "draft survives browser reload",
++    "50 consecutive real questions graded on server",
++    "real Shaanxi A–H question",
++    "judge correct/incorrect labels and wrong answer",
++    "wrongbook auto-insert and correct redo resolves",
++    "restored LaTeX renders as KaTeX",
++    "question images delivered from original dataset",
++    "concept map, detail and sample questions",
++    "paper session builds original question order",
++    "history and resume links",
++    "Chinese keyword search",
++    "375px layouts without horizontal page overflow",
++    "logout saves pending draft before revoking session",
++    "user account cannot enter admin",
++    "independent admin login and 375px settings layout",
++    "admin password rejects wrong current password, revokes session and accepts new password"
++  ],
++  "console_errors": [],
++  "screenshots": [
++    "questions-desktop.png",
++    "practice-desktop.png",
++    "questions-mobile.png",
++    "practice-mobile.png",
++    "login-mobile.png"
++  ]
++}diff --git a/test-artifacts/personal-center/final-fix-old6-results.json b/test-artifacts/personal-center/final-fix-old6-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-old6-results.json
+@@ -0,0 +1,11 @@
++{
++  "checks": [
++    "late save acknowledgement preserves dirty status and refresh guard",
++    "clearing the last multi-choice answer still guards unsaved changes",
++    "two tabs reject stale writes, retain local choices, confirm reload and preserve newest draft",
++    "submission freezes navigation and returns correct final result",
++    "same-route query navigation flushes the previous session before remounting",
++    "wrong current password retains account page and authenticated session"
++  ],
++  "console_errors": []
++}diff --git a/test-artifacts/personal-center/final-fix-ordering4-results.json b/test-artifacts/personal-center/final-fix-ordering4-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-ordering4-results.json
+@@ -0,0 +1,9 @@
++{
++  "checks": [
++    "same-user old initial profile GET cannot revert successful PUT, form/topbar/preferences/revision; next PUT succeeds",
++    "same-user late dashboard profile keeps newest profile/goals and next PUT succeeds",
++    "auth.loadProfile late GET returns confirmed newer cache, preserves topbar/defaults and next PUT succeeds",
++    "older successful PUT ACK cannot lower newer same-user GET confirmation; pending dirty input protected, newest form/cache retained and next PUT succeeds"
++  ],
++  "console_errors": []
++}diff --git a/test-artifacts/personal-center/final-fix-package-manifest.json b/test-artifacts/personal-center/final-fix-package-manifest.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-package-manifest.json
+@@ -0,0 +1,91 @@
++{
++  "archive": "var/gk-linux-amd64.tar.gz",
++  "size": 12109319,
++  "sha256": "5ee21b47fd71cc25206e4918e3d51d690aea35a87fa120ec64975cd32d9b2b4b",
++  "file_count": 19,
++  "files": {
++    "README.md": {
++      "size": 8300,
++      "sha256": "aaf11779e606451f802f19ce4ee3678d21c77fbaabab3b0acdd073181228ba33"
++    },
++    "第一轮修复文档.md": {
++      "size": 23521,
++      "sha256": "eb66a25e57efa00b0ee63b7703053ee56ea10711ebfced23b5a19baa9e78819e"
++    },
++    "第二轮修复文档.md": {
++      "size": 7926,
++      "sha256": "644f7b1ea7a5c1870f8b2b6e8cb9d902688480d4b2bc495614a7b7f1fd83baad"
++    },
++    "第二轮上线就绪审查报告.md": {
++      "size": 11171,
++      "sha256": "cceeb6d96fd0dc87598727153a2e3287ff0daa52da3a66393baee35f13f8fb66"
++    },
++    "gk": {
++      "size": 21301980,
++      "sha256": "63360979b38b898e9542beb1fcc8975f557f9148dadec8d6c59d80803e4d019c"
++    },
++    "deploy/gk-backup.service": {
++      "size": 351,
++      "sha256": "e78d795806e9317b67331ee5d3ee98212df89a6d0a24a0245ec7ea692eeaaabc"
++    },
++    "deploy/Caddyfile": {
++      "size": 275,
++      "sha256": "4ab07690df1f60bc71ce509cc19e9da38f407f8220f47e52bc1fc965b8446862"
++    },
++    "deploy/backup.sh": {
++      "size": 410,
++      "sha256": "6440457df757e150f8d020488201da5e5829747070be4102113ee158fbea5944"
++    },
++    "deploy/gk.service": {
++      "size": 664,
++      "sha256": "b95ee2e6e4e1fab798c1f01dc925c480f020bf567ec3dbb39c80b6514bee2977"
++    },
++    "deploy/gk-backup.timer": {
++      "size": 152,
++      "sha256": "0ae0f6d1bcd36fb0b82fe461d1a2ee21f0f83d99b081e484674de932ca6f9b53"
++    },
++    "deploy/gk-distill.service.example": {
++      "size": 939,
++      "sha256": "bd34829d678300ec86a5465f262d2f9763ad354fa84ea9ec725fb055b09e9b09"
++    },
++    "taxonomy/v1/taxonomy.yaml": {
++      "size": 17381,
++      "sha256": "f05acc241af88a6f60011152d1d29e173226fe680162587afea92b2465b2fa79"
++    },
++    "docs/api-design.md": {
++      "size": 14139,
++      "sha256": "b1b289c4ee08566867e1bf7e3402889eb24a2b74551ddb57ab0fd1f31c3a7a3a"
++    },
++    "docs/personal-center-task4-report.md": {
++      "size": 9194,
++      "sha256": "5bb62e8930e28faa238d1fe18b8e1aacae66774deb2aab6b2826b7cff0839824"
++    },
++    "docs/ocr-environment.md": {
++      "size": 4265,
++      "sha256": "b3080076abd2580f1f895e74f96c8487127b641c95b985ccae7280ace7b004a7"
++    },
++    "docs/deployment-2c4g.md": {
++      "size": 30565,
++      "sha256": "4c630c6ae3e26daf57250d4ea27feec1d35f7477fa3065c2de45c614f6197683"
++    },
++    "docs/website-completion.md": {
++      "size": 4146,
++      "sha256": "0bec2d748147768371d9fe9d3f5adf1ed66c86022bd4439264cde48283bcae45"
++    },
++    "docs/personal-center.md": {
++      "size": 6024,
++      "sha256": "6814dbb478ef77f4ceb025015bccedf53c203ac460999090371e4be385aafe5b"
++    },
++    "docs/personal-center-final-fix-report.md": {
++      "size": 8776,
++      "sha256": "8f8f8fb268061de3f7f14bf5fdcab00c0b6bcdf67dc2385340d736c102413f1a"
++    }
++  },
++  "checks": {
++    "allowed_members_only": true,
++    "no_database_key_backup_or_fixture": true,
++    "documents_match_workspace": true,
++    "linux_elf_with_personal_frontend": true
++  },
++  "note": "deploy/backup.sh and backup systemd templates are source configuration, not backup data."
++}
+diff --git a/test-artifacts/personal-center/final-fix-personal17-results.json b/test-artifacts/personal-center/final-fix-personal17-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-personal17-results.json
+@@ -0,0 +1,22 @@
++{
++  "checks": [
++    "four tabs and four types of charts use the real empty dashboard",
++    "full profile PUT persists across refresh and updates topbar",
++    "logout 503 keeps identity and subsequent newly edited profile still has tab/router protection",
++    "profile CAS retains local input, confirmed reload, dirty tab guard, password 400 retains login",
++    "all four tabs fit 375px without page overflow",
++    "real six submissions drive 16.7% accuracy, six minutes, achievements and keyboard chart values; no double-counted module duration",
++    "late real 7-day response cannot replace newer 90-day data; failed dashboard can retry",
++    "resume preserves saved answers and favorite session type; real wrongbook/module/concept buttons create compatible sessions; saved reading size applies to stems/options/analysis",
++    "400 preserves input/login, pending PUT freezes edits/tabs and prevents duplicates; refresh/router/logout guard dirty profile; saved defaults respect explicit URL",
++    "actual same-origin CSV download uses fixed client filename and BOM; over-limit API error visible",
++    "second device loads server preferences, single revoke requires confirmation, revoke-others preserves current Cookie; original statistics rebuild works",
++    "23 real isolated sessions paginate 20/3, legacy nullable metadata shows unknown; current session has no DELETE control and responses contain no token/hash",
++    "actual unmapped latest label reports sparse mapping and does not create invalid concept practice",
++    "stored expired exam date can remain while editing nickname; new past dates and the Beijing leap-year five-year calendar boundary reject inline",
++    "blob 401 dispatches the shared session-expired flow; user switch restores own defaults; current logout uses existing auth API",
++    "identity switch clears previous preference owner even when profile GET fails after Login.vue assigns the new user",
++    "delayed real A dashboard/profile reads and successful PUT ACK after logout/401 cannot replace B nickname/avatar/preferences"
++  ],
++  "console_errors": []
++}diff --git a/test-artifacts/personal-center/final-fix-results.json b/test-artifacts/personal-center/final-fix-results.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-results.json
+@@ -0,0 +1,313 @@
++{
++  "date": "2026-10-06",
++  "status": "implemented and verified; independent focused review pending",
++  "commands": [
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./... -count=1",
++      "chunk_id": "d4b383",
++      "wall_time_seconds": 1.6601e-05,
++      "exit_code": 0,
++      "original_token_count": 126,
++      "output": "ok  \tai_analyze_guokao/cmd/gk\t0.448s\nok  \tai_analyze_guokao/internal/admin\t0.352s\nok  \tai_analyze_guokao/internal/distill\t3.213s\nok  \tai_analyze_guokao/internal/ingest\t10.256s\nok  \tai_analyze_guokao/internal/llm\t0.003s\nok  \tai_analyze_guokao/internal/media\t0.338s\n?   \tai_analyze_guokao/internal/model\t[no test files]\nok  \tai_analyze_guokao/internal/serve\t10.572s\nok  \tai_analyze_guokao/internal/setting\t0.045s\nok  \tai_analyze_guokao/internal/store\t0.774s\nok  \tai_analyze_guokao/internal/study\t0.434s\n"
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./internal/serve -run 'TestPersonal(ExpectedIdentity|GuardedLogout)' -count=1 -v",
++      "chunk_id": "5a49fb",
++      "wall_time_seconds": 7.509e-06,
++      "exit_code": 0,
++      "original_token_count": 699,
++      "output": "=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/PUT/api/account/profile\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/profile\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/dashboard\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/export?days=all\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/sessions\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/password\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/sessions/revoke-others\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/DELETE/api/account/sessions/6d43546a776567b5256ea65b86b5397f\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/practice/stats/rebuild\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/review/wrongbook\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/logout\n--- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects (0.29s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/PUT/api/account/profile (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/profile (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/dashboard (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/export?days=all (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/sessions (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/password (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/sessions/revoke-others (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/DELETE/api/account/sessions/6d43546a776567b5256ea65b86b5397f (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/practice/stats/rebuild (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/review/wrongbook (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/logout (0.00s)\n=== RUN   TestPersonalExpectedIdentityAuthenticationAndOrigin\n已生成配置加密密钥: /tmp/TestPersonalExpectedIdentityAuthenticationAndOrigin482815600/001/key（请备份；丢失后需重新填写 API key）\n--- PASS: TestPersonalExpectedIdentityAuthenticationAndOrigin (0.12s)\n=== RUN   TestPersonalGuardedLogoutDoesNotDeleteLaterCookie\n已生成配置加密密钥: /tmp/TestPersonalGuardedLogoutDoesNotDeleteLaterCookie1117628488/001/key（请备份；丢失后需重新填写 API key）\n--- PASS: TestPersonalGuardedLogoutDoesNotDeleteLaterCookie (0.23s)\nPASS\nok  \tai_analyze_guokao/internal/serve\t0.708s\n"
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./internal/serve -run 'TestPersonal(ExpectedIdentity|GuardedLogout)' -count=1",
++      "chunk_id": "13c1c2",
++      "wall_time_seconds": 1.8642e-05,
++      "exit_code": 0,
++      "original_token_count": 12,
++      "output": "ok  \tai_analyze_guokao/internal/serve\t11.365s\n"
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./internal/serve ./internal/study ./internal/store ./internal/setting -count=1",
++      "chunk_id": "feb78b",
++      "wall_time_seconds": 2.1325e-05,
++      "exit_code": 0,
++      "original_token_count": 46,
++      "output": "ok  \tai_analyze_guokao/internal/serve\t159.005s\nok  \tai_analyze_guokao/internal/study\t6.868s\nok  \tai_analyze_guokao/internal/store\t4.767s\nok  \tai_analyze_guokao/internal/setting\t2.134s\n",
++      "note": "R1 main implementation; before guarded logout extension, separately race-tested above."
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go vet ./...",
++      "exit_code": 0,
++      "output": ""
++    },
++    {
++      "command": "env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/final-fix-linux ./cmd/gk",
++      "exit_code": 0,
++      "output": "",
++      "note": "Compilation only; no Windows/macOS native execution"
++    },
++    {
++      "command": "env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/final-fix-windows.exe ./cmd/gk",
++      "exit_code": 0,
++      "output": "",
++      "note": "Compilation only; no Windows/macOS native execution"
++    },
++    {
++      "command": "env CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/final-fix-darwin ./cmd/gk",
++      "exit_code": 0,
++      "output": "",
++      "note": "Compilation only; no Windows/macOS native execution"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --notified-only-logout",
++      "exit_code": 0,
++      "output": "{\n  \"requests\": [],\n  \"url_after_save\": \"http://127.0.0.1:18083/account\"\n}\n{\n  \"checks\": [\n    \"real other-tab logout notification preserves old A input: save/reload/CSV send no requests; late background401 cannot redirect known-stale page\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --cross-tab-account",
++      "exit_code": 0,
++      "output": "{\n  \"notified\": false,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791246809046988779_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:29Z\",\n    \"updated_at\": \"2026-10-06T00:33:29Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791246809046988779_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:29Z\",\n    \"updated_at\": \"2026-10-06T00:33:29Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": 409,\n  \"expected_owner\": \"92\",\n  \"a_owner\": 92,\n  \"local_refusal\": false\n}\n{\n  \"notified\": true,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791246809046988779_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:35Z\",\n    \"updated_at\": \"2026-10-06T00:33:35Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791246809046988779_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:35Z\",\n    \"updated_at\": \"2026-10-06T00:33:35Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": null,\n  \"expected_owner\": null,\n  \"a_owner\": 92,\n  \"local_refusal\": true\n}\n{\n  \"checks\": [\n    \"silent real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie\",\n    \"notified real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie\"\n  ],\n  \"console_errors\": [],\n  \"shared_cookie_cases\": [\n    {\n      \"notified\": false,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791246809046988779_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:29Z\",\n        \"updated_at\": \"2026-10-06T00:33:29Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791246809046988779_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:29Z\",\n        \"updated_at\": \"2026-10-06T00:33:29Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": 409,\n      \"expected_owner\": \"92\",\n      \"a_owner\": 92,\n      \"local_refusal\": false\n    },\n    {\n      \"notified\": true,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791246809046988779_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:35Z\",\n        \"updated_at\": \"2026-10-06T00:33:35Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791246809046988779_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:35Z\",\n        \"updated_at\": \"2026-10-06T00:33:35Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": null,\n      \"expected_owner\": null,\n      \"a_owner\": 92,\n      \"local_refusal\": true\n    }\n  ]\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-identity-conflict",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 409,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A account_changed 409 after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-password",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A password success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-revoke",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A revoke-others success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-current-logout",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A logout success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering",
++      "stage": "final known-stale frontend",
++      "result": "final-fix-final-ordering4-results.json",
++      "chunk_id": "ad2288",
++      "wall_time_seconds": 2.0497e-05,
++      "exit_code": 0,
++      "original_token_count": 132,
++      "output": "{\n  \"checks\": [\n    \"same-user old initial profile GET cannot revert successful PUT, form/topbar/preferences/revision; next PUT succeeds\",\n    \"same-user late dashboard profile keeps newest profile/goals and next PUT succeeds\",\n    \"auth.loadProfile late GET returns confirmed newer cache, preserves topbar/defaults and next PUT succeeds\",\n    \"older successful PUT ACK cannot lower newer same-user GET confirmation; pending dirty input protected, newest form/cache retained and next PUT succeeds\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "npm run build",
++      "workdir": "web",
++      "chunk_id": "dbc91e",
++      "wall_time_seconds": 7.697e-06,
++      "exit_code": 0,
++      "original_token_count": 1702,
++      "output": "✓ 60 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../cmd/gk/web_dist/.gitkeep                                           0.00 kB\n../cmd/gk/web_dist/index.html                                         0.43 kB │ gzip:  0.33 kB\n../cmd/gk/web_dist/assets/KaTeX_Size3-Regular-CTq5MqoE.woff           4.42 kB\n../cmd/gk/web_dist/assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2          4.93 kB\n../cmd/gk/web_dist/assets/KaTeX_Size2-Regular-Dy4dx90m.woff2          5.21 kB\n../cmd/gk/web_dist/assets/KaTeX_Size1-Regular-mCD8mA8B.woff2          5.47 kB\n../cmd/gk/web_dist/assets/KaTeX_Size4-Regular-BF-4gkZK.woff           5.98 kB\n../cmd/gk/web_dist/assets/KaTeX_Size2-Regular-oD1tc_U0.woff           6.19 kB\n../cmd/gk/web_dist/assets/KaTeX_Size1-Regular-C195tn64.woff           6.50 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2    6.91 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2       6.91 kB\n../cmd/gk/web_dist/assets/KaTeX_Size3-Regular-DgpXs0kz.ttf            7.59 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff     7.66 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff        7.72 kB\n../cmd/gk/web_dist/assets/KaTeX_Script-Regular-D3wIWfF6.woff2         9.64 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2     10.34 kB\n../cmd/gk/web_dist/assets/KaTeX_Size4-Regular-DWFBv043.ttf           10.36 kB\n../cmd/gk/web_dist/assets/KaTeX_Script-Regular-D5yQViql.woff         10.59 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2       11.32 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2          11.35 kB\n../cmd/gk/web_dist/assets/KaTeX_Size2-Regular-B7gKUWhC.ttf           11.51 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2      12.03 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2        12.22 kB\n../cmd/gk/web_dist/assets/KaTeX_Size1-Regular-Dbsnue_I.ttf           12.23 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff      12.32 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf     12.34 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf        12.37 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff        13.21 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Bold-BsDP51OF.woff           13.30 kB\n../cmd/gk/web_dist/assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2    13.57 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Italic-DN2j7dab.woff       14.11 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff         14.41 kB\n../cmd/gk/web_dist/assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff     16.03 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2       16.40 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-Italic-t53AETM-.woff2           16.44 kB\n../cmd/gk/web_dist/assets/KaTeX_Script-Regular-C5JkGWo-.ttf          16.65 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2       16.78 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Italic-NWA7e6Wa.woff2           16.99 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff        18.67 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-Italic-DA0__PXp.woff            18.75 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-BoldItalic-SpSLRI95.woff        19.41 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf       19.44 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Regular-CB_wures.ttf         19.57 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf            19.58 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Italic-BMLOBm91.woff            19.68 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf        22.36 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf          24.50 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Bold-Cx986IdX.woff2             25.32 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Regular-B22Nviop.woff2          26.27 kB\n../cmd/gk/web_dist/assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf      27.56 kB\n../cmd/gk/web_dist/assets/KaTeX_AMS-Regular-BQhdFMY1.woff2           28.08 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Bold-Jm3AIy58.woff              29.91 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Regular-Dr94JaBh.woff           30.77 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf         31.20 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-Italic-flOr_0UB.ttf             31.31 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf         32.97 kB\n../cmd/gk/web_dist/assets/KaTeX_AMS-Regular-DMm9YOAa.woff            33.52 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Italic-3WenGoN9.ttf             33.58 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Bold-waoOVXN0.ttf               51.34 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Regular-ypZvNtVU.ttf            53.58 kB\n../cmd/gk/web_dist/assets/KaTeX_AMS-Regular-DRggAlZN.ttf             63.63 kB\n../cmd/gk/web_dist/assets/Admin-D-ntIYnR.css                          2.24 kB │ gzip:  0.75 kB\n../cmd/gk/web_dist/assets/index-Bv8RFqzr.css                         62.91 kB │ gzip: 16.28 kB\n../cmd/gk/web_dist/assets/_plugin-vue_export-helper-DlAUqK2U.js       0.09 kB │ gzip:  0.10 kB\n../cmd/gk/web_dist/assets/NotFound-bhgtJcSq.js                        0.57 kB │ gzip:  0.45 kB\n../cmd/gk/web_dist/assets/Pagination-CukRaQKA.js                      0.71 kB │ gzip:  0.47 kB\n../cmd/gk/web_dist/assets/QuestionRows-C2dctZmk.js                    1.19 kB │ gzip:  0.75 kB\n../cmd/gk/web_dist/assets/Filters-BWztiWnt.js                         1.44 kB │ gzip:  0.91 kB\n../cmd/gk/web_dist/assets/Papers-BMxuzR_t.js                          2.19 kB │ gzip:  1.31 kB\n../cmd/gk/web_dist/assets/Favorites-ck3rjsLE.js                       2.38 kB │ gzip:  1.36 kB\n../cmd/gk/web_dist/assets/ConceptList-DNNTP2A9.js                     3.01 kB │ gzip:  1.73 kB\n../cmd/gk/web_dist/assets/QuestionList-D4ba7iyH.js                    3.09 kB │ gzip:  1.72 kB\n../cmd/gk/web_dist/assets/WrongBook-uuCD7QrT.js                       3.15 kB │ gzip:  1.66 kB\n../cmd/gk/web_dist/assets/ConceptDetail-DSTRjpwr.js                   3.26 kB │ gzip:  1.80 kB\n../cmd/gk/web_dist/assets/Records-Blmaay5a.js                         3.34 kB │ gzip:  1.72 kB\n../cmd/gk/web_dist/assets/Login-BjMin_eP.js                           3.54 kB │ gzip:  1.93 kB\n../cmd/gk/web_dist/assets/Admin-DORyvEiS.js                           8.59 kB │ gzip:  3.50 kB\n../cmd/gk/web_dist/assets/Practice-BgM1GhL8.js                       13.04 kB │ gzip:  5.25 kB\n../cmd/gk/web_dist/assets/Account-B2c6nsoc.js                        45.11 kB │ gzip: 15.17 kB\n../cmd/gk/web_dist/assets/index-CySODehx.js                         108.01 kB │ gzip: 42.06 kB\n../cmd/gk/web_dist/assets/RichText-DTUKFGBI.js                      262.05 kB │ gzip: 78.09 kB\n✓ built in 1.44s\n"
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -o test-artifacts/personal-center/_work/gk-task3 ./cmd/gk",
++      "exit_code": 0,
++      "output": "",
++      "stage": "final known-stale frontend embedded"
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 make -o web release",
++      "exit_code": 0,
++      "output_summary": "Reuse final built frontend; compile static Linux and package19 files."
++    },
++    {
++      "command": "python3 test-artifacts/personal-center/task4-package-audit.py --final-fix",
++      "exit_code": 0,
++      "output_summary": "19 files; allowed members, no DB/key/backup/fixture, docs byte-identical, Linux ELF identity/frontend marker."
++    },
++    {
++      "command": "git diff --check",
++      "exit_code": 0,
++      "output": ""
++    }
++  ],
++  "red_commands": [
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --cross-tab-account",
++      "exit_code": 1,
++      "evidence": "final-fix-cross-tab-red.json",
++      "note": "Initial minimal same-context equal-revision test; B nickname polluted and revision1"
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./internal/serve -run TestPersonalExpectedIdentity -count=1 -v",
++      "exit_code": 1,
++      "output_summary": "PUT200 wrote old A input to B; profile/dashboard/CSV/sessions200 exposed B; password200 changed B and revoked its session. Subsequent operations401 are cascades, not independent red proofs."
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-identity-conflict",
++      "exit_code": 1,
++      "evidence": "final-fix-late-identity-red.json"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-password",
++      "exit_code": 1,
++      "evidence": "final-fix-late-password-red.json"
++    },
++    {
++      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./internal/serve -run TestPersonalGuardedLogout -count=1 -v",
++      "exit_code": 1,
++      "output_summary": "guarded logout could delete later Cookie: 200 [gk_user=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict]"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-current-logout",
++      "exit_code": 1,
++      "evidence": "final-fix-late-logout-red.json"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --notified-only-logout",
++      "exit_code": 1,
++      "evidence": "final-fix-known-logout-red.json",
++      "note": "Other-tab real logout notified old A; save still issued PUT401 and redirected, losing input."
++    }
++  ],
++  "harness_failures": [
++    {
++      "reason": "Synthetic username suffix exceeded32 characters",
++      "exit_code": 1
++    },
++    {
++      "reason": "100ms insufficient for real password HTTP; switched to condition polling",
++      "exit_code": 1
++    },
++    {
++      "reason": "3 parallel UI initial logins exceeded2 simultaneous password computations; reran serially",
++      "exit_code": 1
++    }
++  ],
++  "service": {
++    "current_session": null,
++    "addr": "127.0.0.1:18083",
++    "db": "test-artifacts/personal-center/_work/task3.sqlite",
++    "key_file": "test-artifacts/personal-center/_work/task3-synthetic.key",
++    "prior_sessions_closed_exit0": [
++      59278,
++      27520,
++      26563,
++      84388,
++      44597
++    ],
++    "closed": true,
++    "closed_sessions_exit0": [
++      59278,
++      27520,
++      26563,
++      84388,
++      44597,
++      26275,
++      20231,
++      94372
++    ],
++    "note": "Same final binary restarted between ordering and new7 to clear30/min test limiter; no state/fixture reset and no service remains.",
++    "closure_basis": "All owned exec sessions exited0 after Ctrl-C. Optional ss inventory was unavailable due sandbox netlink permission; no port-empty assertion derives from that command."
++  },
++  "ordinary45_binary": {
++    "snapshot": "test-artifacts/personal-center/_work/final-fix-stable45-gk",
++    "sha256": "74effc03878f8ac1a389bf18bfdd2554dac9543f6aae8ebbb32a2ce72d715e2d",
++    "scope": "stable identity/callback/guarded logout version; before only known-stale frontend early rejection and router401 branch"
++  },
++  "intermediate_directed_commands": [
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --cross-tab-account",
++      "exit_code": 0,
++      "output": "{\n  \"notified\": false,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791245738860467406_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:39Z\",\n    \"updated_at\": \"2026-10-06T00:15:39Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791245738860467406_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:39Z\",\n    \"updated_at\": \"2026-10-06T00:15:39Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": 409,\n  \"expected_owner\": \"73\",\n  \"a_owner\": 73\n}\n{\n  \"notified\": true,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791245738860467406_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:45Z\",\n    \"updated_at\": \"2026-10-06T00:15:45Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791245738860467406_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:45Z\",\n    \"updated_at\": \"2026-10-06T00:15:45Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": 409,\n  \"expected_owner\": \"73\",\n  \"a_owner\": 73\n}\n{\n  \"checks\": [\n    \"silent real same-context A/B equal revision: issuing A owner header/409, B unchanged, notice/input retained, stale logout/CSV refused with valid B Cookie\",\n    \"notified real same-context A/B equal revision: issuing A owner header/409, B unchanged, notice/input retained, stale logout/CSV refused with valid B Cookie\"\n  ],\n  \"console_errors\": [],\n  \"shared_cookie_cases\": [\n    {\n      \"notified\": false,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791245738860467406_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:39Z\",\n        \"updated_at\": \"2026-10-06T00:15:39Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791245738860467406_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:39Z\",\n        \"updated_at\": \"2026-10-06T00:15:39Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": 409,\n      \"expected_owner\": \"73\",\n      \"a_owner\": 73\n    },\n    {\n      \"notified\": true,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791245738860467406_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:45Z\",\n        \"updated_at\": \"2026-10-06T00:15:45Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791245738860467406_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:45Z\",\n        \"updated_at\": \"2026-10-06T00:15:45Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": 409,\n      \"expected_owner\": \"73\",\n      \"a_owner\": 73\n    }\n  ]\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-identity-conflict",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 409,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A account_changed 409 after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-password",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A password success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-revoke",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A revoke-others success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-current-logout",
++      "exit_code": 0,
++      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A logout success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
++    }
++  ],
++  "original45": {
++    "date": "2026-10-06",
++    "status": "original45 passed; final known-stale branch targeted verification pending",
++    "commands": [
++      {
++        "command": "python3 test-artifacts/ui_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
++        "exit_code": 0,
++        "checks": 18,
++        "pageerrors": [],
++        "result": "final-fix-old18-results.json"
++      },
++      {
++        "command": "python3 test-artifacts/round2_fixes_ui.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
++        "exit_code": 0,
++        "checks": 6,
++        "pageerrors": [],
++        "result": "final-fix-old6-results.json"
++      },
++      {
++        "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
++        "exit_code": 0,
++        "checks": 17,
++        "pageerrors": [],
++        "result": "final-fix-personal17-results.json"
++      },
++      {
++        "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering",
++        "exit_code": 0,
++        "checks": 4,
++        "pageerrors": [],
++        "result": "final-fix-ordering4-results.json"
++      }
++    ],
++    "checks": 45,
++    "evidence_boundary": "45 verified on stable identity guard / callback / guarded logout version; subsequent only ProfileForm known-stale early rejection and router known-stale401 branch will be verified by final targeted cases + ordering. No changes to ordinary paths."
++  },
++  "evidence_boundary": "Original45 verified on stable main identity/callback/guarded logout version; only subsequent known-stale ProfileForm early refusal and router401 preservation tested on final binary with7 new cases plus ordering4. No claim all45 reran after this narrow branch change.",
++  "unique_ui_groups": 52,
++  "final_ui_groups": 11,
++  "compiled_artifacts": {
++    "gk-task3": {
++      "sha256": "ef1d63dc849a0f890fff9a39b5c961ef885b8ec14caf7725333f8abfcff7531d",
++      "type": "local Go test service with final embedded frontend"
++    },
++    "final-fix-linux": {
++      "sha256": "63360979b38b898e9542beb1fcc8975f557f9148dadec8d6c59d80803e4d019c",
++      "type": "ELF"
++    },
++    "final-fix-windows.exe": {
++      "sha256": "081dc6309df146a7f5511e160783ee0724850f5adf11c6232beee5fc87e4f8e5",
++      "type": "PE32+"
++    },
++    "final-fix-darwin": {
++      "sha256": "e4d91c57a05ffc0c61d47977fbb01f19af9c2ae95829798b19c90eed2633ff04",
++      "type": "Mach-O"
++    }
++  },
++  "package": {
++    "archive": "var/gk-linux-amd64.tar.gz",
++    "size": 12109319,
++    "sha256": "5ee21b47fd71cc25206e4918e3d51d690aea35a87fa120ec64975cd32d9b2b4b",
++    "file_count": 19,
++    "checks": {
++      "allowed_members_only": true,
++      "no_database_key_backup_or_fixture": true,
++      "documents_match_workspace": true,
++      "linux_elf_with_personal_frontend": true
++    },
++    "matches_final_linux_compilation": true
++  }
++}
+diff --git a/test-artifacts/personal-center/final-fix-root-verification.json b/test-artifacts/personal-center/final-fix-root-verification.json
+--- /dev/null
++++ b/test-artifacts/personal-center/final-fix-root-verification.json
+@@ -0,0 +1,36 @@
++{
++  "date": "2026-10-06",
++  "status": "original45 passed; final known-stale branch targeted verification pending",
++  "commands": [
++    {
++      "command": "python3 test-artifacts/ui_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
++      "exit_code": 0,
++      "checks": 18,
++      "pageerrors": [],
++      "result": "final-fix-old18-results.json"
++    },
++    {
++      "command": "python3 test-artifacts/round2_fixes_ui.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
++      "exit_code": 0,
++      "checks": 6,
++      "pageerrors": [],
++      "result": "final-fix-old6-results.json"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
++      "exit_code": 0,
++      "checks": 17,
++      "pageerrors": [],
++      "result": "final-fix-personal17-results.json"
++    },
++    {
++      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering",
++      "exit_code": 0,
++      "checks": 4,
++      "pageerrors": [],
++      "result": "final-fix-ordering4-results.json"
++    }
++  ],
++  "checks": 45,
++  "evidence_boundary": "45 verified on stable identity guard / callback / guarded logout version; subsequent only ProfileForm known-stale early rejection and router known-stale401 branch will be verified by final targeted cases + ordering. No changes to ordinary paths."
++}

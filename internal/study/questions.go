@@ -256,7 +256,7 @@ func (s *Service) label(ctx context.Context, id int64, full bool) (map[string]an
 }
 func (s *Service) Reveal(ctx context.Context, user, id int64) (Question, error) {
 	var n int
-	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM practice_answer a JOIN practice_session p ON p.id=a.session_id WHERE p.user_id=? AND a.question_id=? AND a.is_correct=1 AND p.submitted_at IS NOT NULL`, user, id).Scan(&n)
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM practice_answer a JOIN practice_session p ON p.id=a.session_id WHERE p.user_id=? AND a.question_id=? AND a.user_answer<>'' AND p.submitted_at IS NOT NULL`, user, id).Scan(&n)
 	if err != nil {
 		return Question{}, err
 	}

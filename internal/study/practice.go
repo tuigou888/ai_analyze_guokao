@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"ai_analyze_guokao/internal/store"
 )
 
 type Spec struct {
@@ -16,18 +18,19 @@ type Spec struct {
 	Limit       int     `json:"limit,omitempty"`
 }
 type Session struct {
-	ID          int64      `json:"session_id"`
-	Kind        string     `json:"kind"`
-	Spec        Spec       `json:"spec"`
-	QuestionIDs []int64    `json:"question_ids"`
-	StartedAt   string     `json:"started_at"`
-	SubmittedAt string     `json:"submitted_at"`
-	Total       int        `json:"total"`
-	Correct     int        `json:"correct"`
-	Duration    int64      `json:"duration_ms"`
-	Questions   []Question `json:"questions,omitempty"`
-	Answers     []Answer   `json:"answers"`
-	Results     []Result   `json:"results,omitempty"`
+	DraftRevision int64      `json:"draft_revision"`
+	ID            int64      `json:"session_id"`
+	Kind          string     `json:"kind"`
+	Spec          Spec       `json:"spec"`
+	QuestionIDs   []int64    `json:"question_ids"`
+	StartedAt     string     `json:"started_at"`
+	SubmittedAt   string     `json:"submitted_at"`
+	Total         int        `json:"total"`
+	Correct       int        `json:"correct"`
+	Duration      int64      `json:"duration_ms"`
+	Questions     []Question `json:"questions,omitempty"`
+	Answers       []Answer   `json:"answers"`
+	Results       []Result   `json:"results,omitempty"`
 }
 type Answer struct {
 	QuestionID int64  `json:"question_id"`
@@ -155,7 +158,7 @@ func loadSession(ctx context.Context, q interface {
 }, user, id int64) (Session, error) {
 	p := Session{Answers: []Answer{}}
 	var spec, ids, draft string
-	err := q.QueryRowContext(ctx, `SELECT id,kind,spec,question_ids,started_at,COALESCE(submitted_at,''),total,correct,duration_ms,draft FROM practice_session WHERE id=? AND user_id=?`, id, user).Scan(&p.ID, &p.Kind, &spec, &ids, &p.StartedAt, &p.SubmittedAt, &p.Total, &p.Correct, &p.Duration, &draft)
+	err := q.QueryRowContext(ctx, `SELECT id,kind,spec,question_ids,started_at,COALESCE(submitted_at,''),total,correct,duration_ms,draft,draft_revision FROM practice_session WHERE id=? AND user_id=?`, id, user).Scan(&p.ID, &p.Kind, &spec, &ids, &p.StartedAt, &p.SubmittedAt, &p.Total, &p.Correct, &p.Duration, &draft, &p.DraftRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -199,27 +202,36 @@ func (s *Service) Session(ctx context.Context, user, id int64) (Session, error) 
 	}
 	return p, nil
 }
-func (s *Service) Draft(ctx context.Context, user, id int64, answers []Answer) error {
+func (s *Service) Draft(ctx context.Context, user, id int64, answers []Answer, revision int64) (int64, error) {
+	if revision < 0 {
+		return 0, ErrInvalid
+	}
 	p, err := loadSession(ctx, s.DB, user, id)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if p.SubmittedAt != "" {
-		return errors.Join(ErrInvalid, errors.New("练习已经提交"))
+		return 0, ErrDraftConflict
+	}
+	if p.DraftRevision != revision {
+		return 0, ErrDraftConflict
 	}
 	if _, err = s.validateAnswers(ctx, p, answers); err != nil {
-		return err
+		return 0, err
 	}
 	raw, _ := json.Marshal(answers)
-	res, err := s.DB.ExecContext(ctx, `UPDATE practice_session SET draft=? WHERE id=? AND user_id=? AND submitted_at IS NULL`, string(raw), id, user)
+	res, err := s.DB.ExecContext(ctx, `UPDATE practice_session SET draft=?,draft_revision=draft_revision+1 WHERE id=? AND user_id=? AND submitted_at IS NULL AND draft_revision=?`, string(raw), id, user, revision)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
 	if n == 0 {
-		return ErrInvalid
+		return 0, ErrDraftConflict
 	}
-	return nil
+	return revision + 1, nil
 }
 func (s *Service) validateAnswers(ctx context.Context, p Session, answers []Answer) (map[int64]Answer, error) {
 	allowed := map[int64]bool{}
@@ -264,7 +276,10 @@ func (s *Service) validateAnswers(ctx context.Context, p Session, answers []Answ
 	}
 	return out, nil
 }
-func (s *Service) Submit(ctx context.Context, user, id int64, answers []Answer) (Session, error) {
+func (s *Service) Submit(ctx context.Context, user, id int64, answers []Answer, revision int64) (Session, error) {
+	if revision < 0 {
+		return Session{}, ErrInvalid
+	}
 	p, err := loadSession(ctx, s.DB, user, id)
 	if err != nil {
 		return p, err
@@ -272,57 +287,61 @@ func (s *Service) Submit(ctx context.Context, user, id int64, answers []Answer) 
 	if p.SubmittedAt != "" {
 		return s.Session(ctx, user, id)
 	}
+	if p.DraftRevision != revision {
+		return p, ErrDraftConflict
+	}
 	submitted, err := s.validateAnswers(ctx, p, answers)
 	if err != nil {
 		return p, err
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return p, err
-	}
-	defer tx.Rollback()
-	p, err = loadSession(ctx, tx, user, id)
-	if err != nil {
-		return p, err
-	}
-	if p.SubmittedAt != "" {
-		tx.Rollback()
-		return s.Session(ctx, user, id)
-	}
-	correct := 0
-	var duration int64
-	for i, qid := range p.QuestionIDs {
-		a := submitted[qid]
-		var official, typ string
-		if err = tx.QueryRowContext(ctx, `SELECT answer,answer_type FROM question WHERE id=?`, qid).Scan(&official, &typ); err != nil {
-			return p, err
+	err = store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
+		current, e := loadSession(ctx, tx, user, id)
+		if e != nil {
+			return e
 		}
-		ok := Grade(typ, official, a.Answer)
-		if ok {
-			correct++
+		if current.SubmittedAt != "" {
+			return nil
 		}
-		duration += a.Duration
-		if _, err = tx.ExecContext(ctx, `INSERT INTO practice_answer(session_id,question_id,ord,user_answer,is_correct,duration_ms,answered_at) VALUES(?,?,?,?,?,?,?)`, id, qid, i+1, a.Answer, ok, a.Duration, now()); err != nil {
-			return p, err
+		if current.DraftRevision != revision {
+			return ErrDraftConflict
 		}
-		if a.Answer != "" {
+		p = current
+		correct := 0
+		var duration int64
+		for i, qid := range p.QuestionIDs {
+			a := submitted[qid]
+			var official, typ string
+			if err = tx.QueryRowContext(ctx, `SELECT answer,answer_type FROM question WHERE id=?`, qid).Scan(&official, &typ); err != nil {
+				return err
+			}
+			ok := Grade(typ, official, a.Answer)
 			if ok {
-				_, err = tx.ExecContext(ctx, `UPDATE wrongbook SET resolved=1 WHERE user_id=? AND question_id=? AND source='auto'`, user, qid)
-			} else {
-				_, err = tx.ExecContext(ctx, `INSERT INTO wrongbook(user_id,question_id,source,wrong_count,last_wrong_at) VALUES(?,?,'auto',1,?) ON CONFLICT(user_id,question_id) DO UPDATE SET wrong_count=wrong_count+1,last_wrong_at=excluded.last_wrong_at,resolved=0`, user, qid, now())
+				correct++
 			}
-			if err != nil {
-				return p, err
+			duration += a.Duration
+			if _, err = tx.ExecContext(ctx, `INSERT INTO practice_answer(session_id,question_id,ord,user_answer,is_correct,duration_ms,answered_at) VALUES(?,?,?,?,?,?,?)`, id, qid, i+1, a.Answer, ok, a.Duration, now()); err != nil {
+				return err
+			}
+			if a.Answer != "" {
+				if ok {
+					_, err = tx.ExecContext(ctx, `UPDATE wrongbook SET resolved=1 WHERE user_id=? AND question_id=? AND source='auto'`, user, qid)
+				} else {
+					_, err = tx.ExecContext(ctx, `INSERT INTO wrongbook(user_id,question_id,source,wrong_count,last_wrong_at) VALUES(?,?,'auto',1,?) ON CONFLICT(user_id,question_id) DO UPDATE SET wrong_count=wrong_count+1,last_wrong_at=excluded.last_wrong_at,resolved=0`, user, qid, now())
+				}
+				if err != nil {
+					return err
+				}
 			}
 		}
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE practice_session SET submitted_at=?,correct=?,duration_ms=?,draft='[]' WHERE id=? AND user_id=? AND submitted_at IS NULL`, now(), correct, duration, id, user); err != nil {
-		return p, err
-	}
-	if err = rebuildStats(ctx, tx, user); err != nil {
-		return p, err
-	}
-	if err = tx.Commit(); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE practice_session SET submitted_at=?,correct=?,duration_ms=?,draft='[]',draft_revision=draft_revision+1 WHERE id=? AND user_id=? AND submitted_at IS NULL`, now(), correct, duration, id, user); err != nil {
+			return err
+		}
+		if err = rebuildStats(ctx, tx, user); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return p, err
 	}
 	return s.Session(ctx, user, id)
@@ -396,16 +415,9 @@ func rebuildStats(ctx context.Context, tx *sql.Tx, user int64) error {
 	return err
 }
 func (s *Service) RebuildStats(ctx context.Context, user int64) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = rebuildStats(ctx, tx, user); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error { return rebuildStats(ctx, tx, user) })
 }
+
 func (s *Service) Stats(ctx context.Context, user int64) (map[string]any, error) {
 	var answered, correct, wrong, sessions int
 	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(a.is_correct),0) FROM practice_answer a JOIN practice_session p ON p.id=a.session_id WHERE p.user_id=? AND a.user_answer<>''`, user).Scan(&answered, &correct)

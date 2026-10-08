@@ -60,6 +60,8 @@ func fixture(t *testing.T) (*Server, *sql.DB) {
 func requestTest(t *testing.T, h http.Handler, method, path, body string, cookie *http.Cookie) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("Origin", "http://example.com")
+	r.Header.Set("Content-Type", "application/json")
 	if cookie != nil {
 		r.AddCookie(cookie)
 	}
@@ -111,15 +113,15 @@ func TestPracticeSecurityAndGrading(t *testing.T) {
 	if w.Code != 404 {
 		t.Fatal("other user can read session", w.Code)
 	}
-	w, _ = requestTest(t, h, "POST", path+"/submit", `{"answers":[{"question_id":5,"answer":"A"}]}`, alice)
+	w, _ = requestTest(t, h, "POST", path+"/submit", `{"draft_revision":0,"answers":[{"question_id":5,"answer":"A"}]}`, alice)
 	if w.Code != 400 {
 		t.Fatal("foreign question accepted", w.Code)
 	}
-	w, _ = requestTest(t, h, "POST", path+"/submit", `{"answers":[{"question_id":1,"answer":"Z"}]}`, alice)
+	w, _ = requestTest(t, h, "POST", path+"/submit", `{"draft_revision":0,"answers":[{"question_id":1,"answer":"Z"}]}`, alice)
 	if w.Code != 400 {
 		t.Fatal("invalid option accepted", w.Code)
 	}
-	draft := `{"answers":[{"question_id":1,"answer":"H","duration_ms":1200},{"question_id":2,"answer":"CA"},{"question_id":3,"answer":"B"}]}`
+	draft := `{"draft_revision":0,"answers":[{"question_id":1,"answer":"H","duration_ms":1200},{"question_id":2,"answer":"CA"},{"question_id":3,"answer":"B"}]}`
 	w, _ = requestTest(t, h, "PUT", path+"/answers", draft, alice)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
@@ -128,6 +130,7 @@ func TestPracticeSecurityAndGrading(t *testing.T) {
 	if w.Code != 200 || len(v["answers"].([]any)) != 3 {
 		t.Fatal("draft recovery", w.Body.String())
 	}
+	draft = strings.Replace(draft, `"draft_revision":0`, `"draft_revision":1`, 1)
 	w, v = requestTest(t, h, "POST", path+"/submit", draft, alice)
 	if w.Code != 200 || v["correct"].(float64) != 3 {
 		t.Fatal("grading", w.Body.String())
@@ -189,7 +192,7 @@ func TestWrongbookIsolationRetryAndSkippedReveal(t *testing.T) {
 	}
 	id := create("[1,2]")
 	path := fmt.Sprintf("/api/practice/sessions/%d/submit", id)
-	body := `{"answers":[{"question_id":1,"answer":"A"}]}`
+	body := `{"draft_revision":0,"answers":[{"question_id":1,"answer":"A"}]}`
 	for i := 0; i < 2; i++ {
 		w, _ := requestTest(t, h, "POST", path, body, alice)
 		if w.Code != 200 {
@@ -210,7 +213,7 @@ func TestWrongbookIsolationRetryAndSkippedReveal(t *testing.T) {
 		t.Fatal("wrongbook isolation")
 	}
 	id = create("[1]")
-	w, _ = requestTest(t, h, "POST", fmt.Sprintf("/api/practice/sessions/%d/submit", id), `{"answers":[{"question_id":1,"answer":"H"}]}`, alice)
+	w, _ = requestTest(t, h, "POST", fmt.Sprintf("/api/practice/sessions/%d/submit", id), `{"draft_revision":0,"answers":[{"question_id":1,"answer":"H"}]}`, alice)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}

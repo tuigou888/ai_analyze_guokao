@@ -11,7 +11,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -61,6 +60,22 @@ func Create(ctx context.Context, db *sql.DB, username, password string) error {
 // SetPassword 改口令，并吊销该管理员的所有现有会话——改密码后旧会话继续有效
 // 是常见的安全疏漏。
 func SetPassword(ctx context.Context, db *sql.DB, username, password string) error {
+	return setPassword(ctx, db, username, password, "")
+}
+
+// ChangePassword is the browser-facing path; CLI recovery retains SetPassword.
+func ChangePassword(ctx context.Context, db *sql.DB, username, current, password string) error {
+	var hash string
+	if err := db.QueryRowContext(ctx, `SELECT password_hash FROM admin_user WHERE username=?`, username).Scan(&hash); err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(current)) != nil {
+		return ErrInvalidCredentials
+	}
+	return setPassword(ctx, db, username, password, hash)
+}
+
+func setPassword(ctx context.Context, db *sql.DB, username, password, expectedHash string) error {
 	if len(password) < 8 {
 		return errors.New("密码至少 8 位")
 	}
@@ -68,18 +83,26 @@ func SetPassword(ctx context.Context, db *sql.DB, username, password string) err
 	if err != nil {
 		return err
 	}
-	res, err := db.ExecContext(ctx, `UPDATE admin_user SET password_hash=? WHERE username=?`,
-		string(hash), strings.TrimSpace(username))
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE admin_user SET password_hash=? WHERE username=? AND (?='' OR password_hash=?)`,
+		string(hash), strings.TrimSpace(username), expectedHash, expectedHash)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("管理员 %q 不存在", username)
+		return ErrInvalidCredentials
 	}
-	_, err = db.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`DELETE FROM admin_session WHERE admin_id = (SELECT id FROM admin_user WHERE username=?)`,
 		strings.TrimSpace(username))
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Login 校验口令并签发会话 token。
@@ -107,8 +130,14 @@ func Login(ctx context.Context, db *sql.DB, username, password string) (string, 
 	if err != nil {
 		return "", err
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO admin_session(token, admin_id, created_at, expires_at) VALUES (?,?,?,?)`, tokenHash(token), id, time.Now().Format(time.RFC3339), time.Now().UTC().Add(SessionTTL).Format(time.RFC3339)); err != nil {
+	res, err := db.ExecContext(ctx, `INSERT INTO admin_session(token, admin_id, created_at, expires_at) SELECT ?,id,?,? FROM admin_user WHERE id=? AND password_hash=?`, tokenHash(token), time.Now().Format(time.RFC3339), time.Now().UTC().Add(SessionTTL).Format(time.RFC3339), id, hash)
+	if err != nil {
 		return "", err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return "", err
+	} else if n != 1 {
+		return "", ErrInvalidCredentials
 	}
 	_, _ = db.ExecContext(ctx, `UPDATE admin_user SET last_login_at=? WHERE id=?`, time.Now().Format(time.RFC3339), id)
 	return token, nil

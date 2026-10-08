@@ -1,0 +1,11 @@
+{
+  "checks": [
+    "late save acknowledgement preserves dirty status and refresh guard",
+    "clearing the last multi-choice answer still guards unsaved changes",
+    "two tabs reject stale writes, retain local choices, confirm reload and preserve newest draft",
+    "submission freezes navigation and returns correct final result",
+    "same-route query navigation flushes the previous session before remounting",
+    "wrong current password retains account page and authenticated session"
+  ],
+  "console_errors": []
+}

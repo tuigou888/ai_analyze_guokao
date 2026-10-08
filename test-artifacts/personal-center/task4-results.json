@@ -1,0 +1,147 @@
+{
+  "date": "2026-10-05",
+  "status": "implementation evidence ready; independent final review pending",
+  "scope": "Task4 integration tests/docs/Makefile; no production business or frontend source edits",
+  "commands": [
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./cmd/gk ./internal/store -run 'TestPersonal(BackupBundle|Migration)' -count=1 -v",
+      "exit_code": 0,
+      "output": "PASS TestPersonalBackupBundleRestoresProfileSessionAndCAS (0.14s); PASS TestPersonalMigrationFromV11PreservesSecretsAndDraft (0.02s); cmd/gk 0.196s, store 0.020s. Full suite after the final nondefault exam_date fixture also passed."
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./... -count=1",
+      "exit_code": 0,
+      "output": "ok  \tai_analyze_guokao/cmd/gk\t0.435s\nok  \tai_analyze_guokao/internal/admin\t0.347s\nok  \tai_analyze_guokao/internal/distill\t3.222s\nok  \tai_analyze_guokao/internal/ingest\t10.449s\nok  \tai_analyze_guokao/internal/llm\t0.003s\nok  \tai_analyze_guokao/internal/media\t0.331s\n?   \tai_analyze_guokao/internal/model\t[no test files]\nok  \tai_analyze_guokao/internal/serve\t10.188s\nok  \tai_analyze_guokao/internal/setting\t0.044s\nok  \tai_analyze_guokao/internal/store\t0.770s\nok  \tai_analyze_guokao/internal/study\t0.431s\n"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./cmd/gk -run 'Test(PersonalBackupBundle|Backup)' -count=1",
+      "exit_code": 0,
+      "output": "ok ai_analyze_guokao/cmd/gk 8.806s"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go vet ./...",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": "npm run build",
+      "workdir": "web",
+      "exit_code": 0,
+      "output": "vite v6.4.3; 60 modules transformed; built in 1.60s",
+      "note": "Existing dependencies; no npm ci"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/gk-linux-amd64 ./cmd/gk",
+      "exit_code": 0,
+      "output": "",
+      "native_runtime_tested": false
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/gk-windows-amd64.exe ./cmd/gk",
+      "exit_code": 0,
+      "output": "",
+      "native_runtime_tested": false
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/gk-darwin-amd64 ./cmd/gk",
+      "exit_code": 0,
+      "output": "",
+      "native_runtime_tested": false
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 make -o web release",
+      "exit_code": 0,
+      "output": "Built Linux binary; copied deploy/taxonomy/README/fix reports and six docs including personal-center.md/task4 report; tar archive created.",
+      "note": "Previously verified npm build reused; skips npm ci"
+    },
+    {
+      "command": "python3 test-artifacts/personal-center/task4-package-audit.py",
+      "chunk_id": "3d4bbf",
+      "wall_time_seconds": 0.235253106,
+      "exit_code": 0,
+      "original_token_count": 113,
+      "output": "{\n  \"archive\": \"var/gk-linux-amd64.tar.gz\",\n  \"size\": 12100179,\n  \"sha256\": \"82beae21a4cc421653f47b843d7944e7fad0b426d9942089b02cb19d4bb09e3d\",\n  \"file_count\": 18,\n  \"checks\": {\n    \"allowed_members_only\": true,\n    \"no_database_key_backup_or_fixture\": true,\n    \"documents_match_workspace\": true,\n    \"linux_elf_with_personal_frontend\": true\n  },\n  \"note\": \"deploy/backup.sh and backup systemd templates are source configuration, not backup data.\"\n}"
+    },
+    {
+      "command": "file var/release/gk test-artifacts/personal-center/_work/gk-windows-amd64.exe test-artifacts/personal-center/_work/gk-darwin-amd64",
+      "chunk_id": "8f40e2",
+      "wall_time_seconds": 9.845e-06,
+      "exit_code": 0,
+      "original_token_count": 139,
+      "output": "var/release/gk:                                            ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, Go BuildID=C0lj8A_632--uFIbnDlR/wz1gzGyjYOyIzjOSDt_P/1KjTWxnmzrYVijkTx7Y4/HhbaPwFg8l1UN0w7WYG4, BuildID[sha1]=4c7f4af2712d6788c87737b4ab88c92c94fe50fe, with debug_info, not stripped\ntest-artifacts/personal-center/_work/gk-windows-amd64.exe: PE32+ executable for MS Windows 6.01 (console), x86-64, 16 sections\ntest-artifacts/personal-center/_work/gk-darwin-amd64:      Mach-O 64-bit x86_64 executable, flags:<|DYLDLINK|PIE>\n"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": "python3 -m py_compile test-artifacts/ui_regression.py test-artifacts/round2_fixes_ui.py test-artifacts/personal_center_regression.py",
+      "exit_code": 0,
+      "output": ""
+    }
+  ],
+  "inherited_core_race": {
+    "evidence": "task4-root-precheck.json",
+    "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./internal/serve ./internal/study ./internal/store ./internal/setting",
+    "exit_code": 0,
+    "note": "Same production Go code; Task4 added only cmd/gk restore test, covered by additional race."
+  },
+  "browser": {
+    "executor": "root",
+    "evidence": "task4-root-precheck.json",
+    "files": [
+      "task4-old18-results.json",
+      "task4-old6-results.json",
+      "task4-personal17-results.json",
+      "task4-ordering4-results.json"
+    ],
+    "checks": 45,
+    "exit_codes": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pageerrors": [],
+    "note": "console_errors field listens only to pageerror; not all console or network messages."
+  },
+  "service": {
+    "session": 42574,
+    "port": 18083,
+    "db": "test-artifacts/personal-center/_work/task3.sqlite",
+    "key": "test-artifacts/personal-center/_work/task3-synthetic.key",
+    "state": "normally closed",
+    "exit_code": 0
+  },
+  "package_evidence": "task4-package-manifest.json",
+  "coverage": "task4-coverage.md",
+  "unverified": [
+    "formal DB/key migration",
+    "production HTTPS/trusted proxy configuration",
+    "production load/long-run operation",
+    "cross-machine restore",
+    "Windows/macOS native runtime",
+    "other browsers/real screen readers"
+  ],
+  "excluded_actions": [
+    "commit",
+    "push",
+    "deploy",
+    "formal DB/key access"
+  ],
+  "package_sha256": "82beae21a4cc421653f47b843d7944e7fad0b426d9942089b02cb19d4bb09e3d",
+  "task4_diff_files": [
+    "README.md",
+    "Makefile",
+    "docs/api-design.md",
+    "docs/deployment-2c4g.md",
+    "docs/personal-center-progress.md",
+    "cmd/gk/backup_restore_test.go",
+    "docs/personal-center.md",
+    "docs/personal-center-task4-report.md",
+    "test-artifacts/personal-center/task4-coverage.md",
+    "test-artifacts/personal-center/task4-package-audit.py"
+  ],
+  "snapshot_manifest_count": 27
+}

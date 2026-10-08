@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { api } from '../api'
-import { auth } from '../auth'
+import { auth, clearUser, setUser, loadProfile } from '../auth'
 const router = createRouter({
   history: createWebHistory(),
   scrollBehavior: () => ({ top: 0 }),
@@ -17,7 +17,7 @@ const router = createRouter({
     { path: '/concepts', component: () => import('../views/ConceptList.vue'), meta: { title: '考点地图' } },
     { path: '/concepts/:id', component: () => import('../views/ConceptDetail.vue'), meta: { title: '考点卡片' } },
     { path: '/records', component: () => import('../views/Records.vue'), meta: { title: '学习记录' } },
-    { path: '/account', component: () => import('../views/Account.vue'), meta: { title: '账户设置' } },
+    { path: '/account', component: () => import('../views/Account.vue'), meta: { title: '个人中心' } },
     { path: '/:pathMatch(.*)*', component: () => import('../views/NotFound.vue'), meta: { public: true } },
   ],
 })
@@ -26,15 +26,19 @@ router.beforeEach(async to => {
   if (to.meta.public) return true
   try {
     if (to.meta.admin) auth.admin = await api.me()
-    else auth.user = await api.userMe()
+    else { setUser(await api.userMe()); await loadProfile().catch(e => { if(e.status === 401) throw e }) }
   } catch (e) {
     if (e.status !== 401) throw e
+    if (!to.meta.admin) clearUser()
     return { path: to.meta.admin ? '/admin/login' : '/login', query: { redirect: to.fullPath } }
   }
 })
 window.addEventListener('session-expired', e => {
   const admin = e.detail === 'admin'
-  auth[admin ? 'admin' : 'user'] = null
+  if (!admin && auth.identityChanged) return
+  if (!admin && typeof e.detail === 'object' && e.detail.expectedUser !== auth.user?.id) return
+  if (admin) auth.admin = null
+  else clearUser()
   router.replace({ path: admin ? '/admin/login' : '/login', query: { redirect: router.currentRoute.value.fullPath } })
 })
 export default router

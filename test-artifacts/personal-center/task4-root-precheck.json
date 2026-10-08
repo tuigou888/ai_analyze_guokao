@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-05",
+  "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./...",
+  "exit_code": 0,
+  "packages": [
+    "cmd/gk",
+    "internal/admin",
+    "internal/distill",
+    "internal/ingest",
+    "internal/llm",
+    "internal/media",
+    "internal/serve",
+    "internal/setting",
+    "internal/store",
+    "internal/study"
+  ],
+  "service_port": 18083,
+  "service_session": 11444,
+  "notes": "Whole-suite root precheck before Task4 integration tests; repeat after test/source changes as appropriate.",
+  "vet": {
+    "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go vet ./...",
+    "exit_code": 0,
+    "output": ""
+  },
+  "race": {
+    "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./internal/serve ./internal/study ./internal/store ./internal/setting",
+    "exit_code": 0,
+    "output": "serve 150.621s; study 6.719s; store 4.525s; setting 2.141s; no race reported"
+  },
+  "visual_check": {
+    "artifacts": [
+      "account-populated-desktop.png",
+      "account-populated-mobile-学习总览.png"
+    ],
+    "method": "Viewed real-browser screenshots",
+    "result": "Desktop/mobile show real goals, period totals, separate count/accuracy trends, six modules,90-day calendar and achievements; sparse/empty module labels visible."
+  },
+  "old18": {
+    "command": "python3 test-artifacts/ui_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+    "exit_code": 0,
+    "checks": 18,
+    "console_errors": [],
+    "result": "task4-old18-results.json"
+  },
+  "old6": {
+    "command": "python3 test-artifacts/round2_fixes_ui.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+    "exit_code": 0,
+    "checks": 6,
+    "console_errors": [],
+    "result": "task4-old6-results.json"
+  },
+  "personal17": {
+    "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+    "exit_code": 0,
+    "checks": 17,
+    "console_errors": [],
+    "result": "task4-personal17-results.json"
+  },
+  "ordering4": {
+    "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering",
+    "exit_code": 0,
+    "checks": 4,
+    "console_errors": [],
+    "result": "task4-ordering4-results.json"
+  }
+}

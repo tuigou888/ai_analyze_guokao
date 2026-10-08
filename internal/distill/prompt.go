@@ -8,13 +8,14 @@ import (
 )
 
 // PromptVersion 提示词版本。产出必须记录它，否则无从回溯"这批标注是哪版规则产的"。
-const PromptVersion = "v1"
+const PromptVersion = "v2"
 
 // QuestionInput 是喂给模型的题目材料。
 type QuestionInput struct {
 	Module      string
 	Tag         string // 数据自带的粗标签，作为弱提示
 	Stem        string // 已还原公式与图片文本的题干
+	Material    string
 	Options     []OptionInput
 	Answer      string
 	AnswerType  model.AnswerType
@@ -121,6 +122,11 @@ func BuildUserPrompt(q QuestionInput) string {
 	fmt.Fprintf(&b, "科目（数据自带的模块）：%s\n", q.Module)
 	if q.Tag != "" {
 		fmt.Fprintf(&b, "数据自带的粗标签（仅供参考，可能是兜底标签「综合」）：%s\n", q.Tag)
+	}
+	if q.Material != "" {
+		b.WriteString("\n【材料】\n")
+		b.WriteString(strings.TrimSpace(q.Material))
+		b.WriteString("\n")
 	}
 	b.WriteString("\n【题干】\n")
 	b.WriteString(strings.TrimSpace(q.Stem))

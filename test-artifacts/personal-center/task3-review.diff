@@ -1,0 +1,1054 @@
+--- a/web/src/views/Account.vue
++++ b/web/src/views/Account.vue
+@@ -1,10 +1,42 @@
+ <script setup>
+-import { ref } from 'vue'
+-import { useRouter } from 'vue-router'
+-import { auth } from '../auth'
++import { computed,onBeforeUnmount,onMounted,ref,nextTick } from 'vue'
++import { onBeforeRouteLeave,onBeforeRouteUpdate } from 'vue-router'
+ import { api } from '../api'
+-const current=ref(''),password=ref(''),confirm=ref(''),error=ref(''),notice=ref(''),busy=ref(false),router=useRouter()
+-async function change(){error.value='';if(password.value!==confirm.value){error.value='两次输入的新密码不一致';return};busy.value=true;try{await api.userPassword({current_password:current.value,password:password.value});auth.user=null;await router.replace('/login')}catch(e){error.value=e.message}finally{busy.value=false}}
+-async function rebuild(){busy.value=true;try{await api.rebuildStats();notice.value='考点练习统计已重新计算'}catch(e){error.value=e.message}finally{busy.value=false}}
++import { auth,applyProfile } from '../auth'
++import Avatar from '../components/account/Avatar.vue'
++import Overview from '../components/account/Overview.vue'
++import Review from '../components/account/Review.vue'
++import ProfileForm from '../components/account/ProfileForm.vue'
++import Security from '../components/account/Security.vue'
++const emit=defineEmits(['logout'])
++const tabs=['学习总览','复习助手','资料与偏好','账户安全'],tab=ref(0),tablist=ref(null),days=ref(30),profile=ref(auth.profile),dashboard=ref(null),busy=ref(false),error=ref(''),profileError=ref(''),form=ref(null),security=ref(null)
++let loadGeneration=0,alive=true
++const pageUserID=auth.user?.id,pageUsername=auth.user?.username
++const ownsPage=()=>alive&&auth.user?.id===pageUserID
++const nickname=computed(()=>profile.value?.nickname || auth.user?.username || '研习者')
++const countdown=computed(()=>{if(!profile.value?.exam_date)return '';const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const remaining=Math.round((Date.parse(profile.value.exam_date+'T00:00:00+08:00')-Date.parse(today+'T00:00:00+08:00'))/86400000);return remaining>0?`距离考试还有 ${remaining} 天`:remaining===0?'考试日期已到':'考试日期已过'})
++async function load(){const generation=++loadGeneration;busy.value=true;error.value='';try{const data=await api.dashboard(days.value);if(ownsPage()&&generation===loadGeneration){if(data.profile.username!==pageUsername){error.value='登录账户已变化，请重新进入个人中心';return};dashboard.value=data;if(!profile.value)saved(data.profile)}}catch(e){if(ownsPage()&&generation===loadGeneration)error.value=e.message}finally{if(ownsPage()&&generation===loadGeneration)busy.value=false}}
++async function reloadProfile(){profileError.value='';try{const p=await api.profile();if(ownsPage()&&!saved(p))profileError.value='登录账户已变化，请重新进入个人中心'}catch(e){if(ownsPage())profileError.value=e.message}}
++function saved(p){if(!ownsPage()||p.username!==pageUsername||!applyProfile(p,pageUserID))return false;profile.value=p;if(dashboard.value)dashboard.value.profile=p;return true}
++function guard(){if(!auth.user)return true;if(form.value?.busy||security.value?.busy)return false;if(form.value?.dirty||security.value?.dirty){if(!window.confirm('有尚未保存的资料或密码输入。取消可返回保存；确定将放弃修改并离开。'))return false;form.value?.reset();security.value?.reset()}return true}
++function switchTab(i){if(i===tab.value)return true;if(!guard())return false;tab.value=i;return true}
++async function tabKey(e,i){let target;if(e.key==='ArrowRight')target=(i+1)%4;else if(e.key==='ArrowLeft')target=(i+3)%4;else if(e.key==='Home')target=0;else if(e.key==='End')target=3;else return;e.preventDefault();if(switchTab(target)){await nextTick();tablist.value?.querySelectorAll('button')[target]?.focus()}}
++function beforeUnload(e){if(form.value?.dirty||security.value?.dirty||form.value?.busy||security.value?.busy){e.preventDefault();e.returnValue=''}}
++onBeforeRouteLeave(()=>guard())
++onBeforeRouteUpdate(()=>guard())
++defineExpose({savePending:async()=>{if(!guard())throw new Error('尚未保存的资料已保留，请保存后再退出')}})
++onMounted(()=>{load();if(!profile.value)reloadProfile();window.addEventListener('beforeunload',beforeUnload)})
++onBeforeUnmount(()=>{alive=false;loadGeneration++;window.removeEventListener('beforeunload',beforeUnload)})
+ </script>
+-<template><div class="page-heading"><div><p class="eyebrow">账户设置 / ACCOUNT</p><h1>你的学习账户</h1><p class="muted">{{ auth.user?.nickname || auth.user?.username }} · {{ auth.user?.username }}</p></div></div><div class="account-grid"><form class="panel account-card" @submit.prevent="change"><h2>修改密码</h2><p class="muted">修改成功后会退出所有设备，请重新登录。</p><label>当前密码<input v-model="current" required type="password" autocomplete="current-password" /></label><label>新密码<input v-model="password" required minlength="8" type="password" autocomplete="new-password" /></label><label>确认新密码<input v-model="confirm" required minlength="8" type="password" autocomplete="new-password" /></label><button class="primary" :disabled="busy">修改密码</button></form><section class="panel account-card"><h2>学习统计</h2><p class="muted">考点标注更新后，可以根据历史作答重新计算考点掌握度。练习记录是统计依据。</p><button :disabled="busy" @click="rebuild">重新计算考点统计</button><p v-if="notice" class="notice ok" role="status">{{ notice }}</p></section></div><p v-if="error" class="notice err" role="alert">{{ error }}</p></template>
++<template>
++<div class="pc-account">
++  <header class="pc-heading"><div class="pc-identity"><Avatar :id="profile?.avatar_id || 0" :name="nickname" large/><div><p class="eyebrow">个人中心 / 学习工作台</p><h1>{{ nickname }}，今天继续研习</h1><p class="muted">{{ profile?.username || auth.user?.username }} · {{ profile?.created_at ? profile.created_at.slice(0,10)+' 加入' : '你的个人学习空间' }}</p><p v-if="profile?.bio" class="pc-bio">{{ profile.bio }}</p></div></div><div class="pc-exam" v-if="countdown"><span>{{ profile.exam_name || '备考计划' }}</span><strong>{{ countdown }}</strong><button class="text-button" @click="switchTab(2)">编辑考试信息</button></div><div class="pc-exam" v-else><span>把下一步写进计划</span><button @click="switchTab(2)">设置考试与目标</button></div></header>
++  <div class="pc-tabs" role="tablist" aria-label="个人中心页面" ref="tablist"><button v-for="(name,i) in tabs" :key="name" role="tab" :id="`pc-tab-${i}`" :aria-controls="`pc-panel-${i}`" :aria-selected="tab===i" :tabindex="tab===i?0:-1" @click="switchTab(i)" @keydown="tabKey($event,i)">{{ name }}</button></div>
++  <div class="pc-range" v-show="tab<=1"><span>复盘范围</span><div role="group" aria-label="统计范围"><button v-for="value in [7,30,90]" :key="value" :aria-pressed="days===value" @click="days=value;load()">{{ value }} 天</button></div><span class="muted small">{{ busy?'正在更新…':'北京时间自然日' }}</span></div>
++  <p v-if="profileError" class="notice err" role="alert">资料加载失败：{{ profileError }} <button @click="reloadProfile">重试资料</button></p><div v-if="error&&tab<=1" class="notice err" role="alert">学习数据加载失败：{{ error }} <button @click="load">重试学习数据</button></div><p v-if="!dashboard&&busy&&tab<=1" class="pc-empty" role="status">正在读取你的学习记录…</p>
++  <section v-show="tab===0" role="tabpanel" id="pc-panel-0" aria-labelledby="pc-tab-0" tabindex="0"><Overview v-if="dashboard&&profile" :dashboard="dashboard" :profile="profile" @goals="switchTab(2)"/></section>
++  <section v-show="tab===1" role="tabpanel" id="pc-panel-1" aria-labelledby="pc-tab-1" tabindex="0"><Review v-if="dashboard&&profile" :review="dashboard.review" :profile="profile" :days="dashboard.days"/></section>
++  <section v-show="tab===2" role="tabpanel" id="pc-panel-2" aria-labelledby="pc-tab-2" tabindex="0"><ProfileForm v-if="profile" ref="form" :profile="profile" @saved="saved"/></section>
++  <section v-show="tab===3" role="tabpanel" id="pc-panel-3" aria-labelledby="pc-tab-3" tabindex="0"><Security ref="security" @logout="emit('logout')"/></section>
++</div>
++</template>
+--- a/web/src/App.vue
++++ b/web/src/App.vue
+@@ -1,15 +1,18 @@
+ <script setup>
+ import { useRoute, useRouter } from 'vue-router'
+-import { auth } from './auth'
++import { auth, clearUser } from './auth'
+ import { api } from './api'
+-import { ref } from 'vue'
++import { ref, watch } from 'vue'
++import './components/account/account.css'
+ const route = useRoute(), router = useRouter(), error = ref(''), currentView = ref(null)
++watch(() => route.fullPath, () => { error.value = '' })
+ const links = [['/questions','题库练习','题'],['/papers','真题试卷','卷'],['/concepts','考点地图','知'],['/wrongbook','错题本','错'],['/favorites','我的收藏','藏'],['/records','学习记录','记']]
+ async function logout() {
++  error.value = ''
+   try {
+     if (!route.meta.admin) await currentView.value?.savePending?.()
+     if (route.meta.admin) { await api.logout(); auth.admin = null; await router.push('/admin/login') }
+-    else { await api.userLogout(); auth.user = null; await router.push('/login') }
++    else { await api.userLogout(); clearUser(); await router.push('/login') }
+   } catch(e) { error.value = e.message }
+ }
+ </script>
+@@ -24,11 +27,11 @@
+         <RouterLink v-for="[to,label,symbol] in links" :key="to" :to="to"><span class="nav-symbol" aria-hidden="true">{{ symbol }}</span>{{ label }}</RouterLink>
+       </nav>
+       <div class="sidebar-note"><span class="small-label">研习笔记</span><p>看懂一道题，<br>再走稳下一步。</p><span class="muted">练习 · 复盘 · 归纳</span></div>
+-      <div class="sidebar-bottom"><RouterLink to="/account">账户设置</RouterLink><RouterLink to="/admin">管理入口</RouterLink></div>
++      <div class="sidebar-bottom"><RouterLink to="/account">个人中心</RouterLink><RouterLink to="/admin">管理入口</RouterLink></div>
+     </aside>
+     <div class="workspace">
+-      <header class="topbar"><span>{{ route.meta.title }}</span><div class="topbar-user"><span class="avatar">{{ (route.meta.admin ? auth.admin?.username : auth.user?.nickname || auth.user?.username)?.slice(0,1)?.toUpperCase() }}</span><span>{{ route.meta.admin ? auth.admin?.username : auth.user?.nickname || auth.user?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
+-      <main id="main" tabindex="-1"><p v-if="error" class="notice err" role="alert">{{ error }}</p><RouterView v-slot="{ Component }"><component :is="Component" :key="route.fullPath" ref="currentView" /></RouterView></main>
++      <header class="topbar"><span>{{ route.meta.title }}</span><div class="topbar-user"><RouterLink v-if="!route.meta.admin" to="/account" class="pc-topbar-link" aria-label="打开个人中心"><span :class="['avatar','pc-avatar',`pc-avatar-${auth.profile?.avatar_id || 0}`]">{{ Array.from(auth.user?.nickname || auth.user?.username || '?')[0]?.toUpperCase() }}</span><span>{{ auth.user?.nickname || auth.user?.username }}</span></RouterLink><span v-else>{{ auth.admin?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
++      <main id="main" tabindex="-1"><p v-if="error" class="notice err" role="alert">{{ error }}</p><RouterView v-slot="{ Component }"><component :is="Component" :key="route.fullPath" ref="currentView" @logout="logout" /></RouterView></main>
+       <footer class="site-footer">行测研习 <span>以真题为起点，以理解为进步。</span></footer>
+     </div>
+   </div>
+--- a/web/src/api.js
++++ b/web/src/api.js
+@@ -1,9 +1,11 @@
+ export async function request(path, options = {}) {
++  const { responseType, ...fetchOptions } = options
+   const res = await fetch(path, {
+     credentials: 'same-origin',
+-    ...options,
++    ...fetchOptions,
+     headers: { 'Content-Type': 'application/json', ...options.headers },
+   })
++  if (res.ok && responseType === 'blob') return res.blob()
+   const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+   if (!res.ok) {
+     const e = new Error(body.error || `HTTP ${res.status}`)
+@@ -33,6 +35,14 @@
+   register: data => post('/api/auth/register', data),
+   userLogout: () => post('/api/auth/logout'),
+   userPassword: data => post('/api/auth/password', data),
++  profile: () => request('/api/account/profile'),
++  saveProfile: data => request('/api/account/profile', { method: 'PUT', body: JSON.stringify(data) }),
++  dashboard: days => request(`/api/account/dashboard?${query({ days })}`),
++  loginSessions: page => request(`/api/account/sessions?${query({ page })}`),
++  revokeSession: id => request(`/api/account/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
++  revokeOtherSessions: () => post('/api/account/sessions/revoke-others'),
++  prioritizedWrongbook: () => post('/api/account/review/wrongbook'),
++  exportRecords: days => request(`/api/account/export?${query({ days })}`, { responseType: 'blob' }),
+   filters: () => request('/api/filters'),
+   questions: f => request(`/api/questions?${query(f)}`),
+   papers: f => request(`/api/papers?${query(f)}`),
+--- a/web/src/auth.js
++++ b/web/src/auth.js
+@@ -1,2 +1,30 @@
+ import { reactive } from 'vue'
+-export const auth = reactive({ user: null, admin: null })
++import { api } from './api'
++export const auth = reactive({ user: null, admin: null, profile: null })
++// Only the currently verified user owns this in-memory preference cache.
++let profileGeneration = 0
++let profileUserID = null
++export function clearUser() {
++  profileGeneration++
++  auth.user = null
++  auth.profile = null
++  profileUserID = null
++}
++export function setUser(user) {
++  if (profileUserID !== user?.id) { profileGeneration++; auth.profile = null; profileUserID = null }
++  auth.user = user
++}
++export function applyProfile(profile, userID = auth.user?.id) {
++  if (!auth.user || userID !== auth.user.id || profile.username !== auth.user.username) return false
++  profileUserID = auth.user?.id ?? null
++  auth.profile = profile
++  if (auth.user) auth.user.nickname = profile.nickname
++  return true
++}
++export async function loadProfile() {
++  const id = auth.user?.id, generation = ++profileGeneration
++  if (id == null) return null
++  const profile = await api.profile()
++  if (generation === profileGeneration && auth.user?.id === id) applyProfile(profile)
++  return generation === profileGeneration && auth.user?.id === id ? profile : null
++}
+--- a/web/src/router/index.js
++++ b/web/src/router/index.js
+@@ -1,6 +1,6 @@
+ import { createRouter, createWebHistory } from 'vue-router'
+ import { api } from '../api'
+-import { auth } from '../auth'
++import { auth, clearUser, setUser, loadProfile } from '../auth'
+ const router = createRouter({
+   history: createWebHistory(),
+   scrollBehavior: () => ({ top: 0 }),
+@@ -17,7 +17,7 @@
+     { path: '/concepts', component: () => import('../views/ConceptList.vue'), meta: { title: '考点地图' } },
+     { path: '/concepts/:id', component: () => import('../views/ConceptDetail.vue'), meta: { title: '考点卡片' } },
+     { path: '/records', component: () => import('../views/Records.vue'), meta: { title: '学习记录' } },
+-    { path: '/account', component: () => import('../views/Account.vue'), meta: { title: '账户设置' } },
++    { path: '/account', component: () => import('../views/Account.vue'), meta: { title: '个人中心' } },
+     { path: '/:pathMatch(.*)*', component: () => import('../views/NotFound.vue'), meta: { public: true } },
+   ],
+ })
+@@ -26,15 +26,17 @@
+   if (to.meta.public) return true
+   try {
+     if (to.meta.admin) auth.admin = await api.me()
+-    else auth.user = await api.userMe()
++    else { setUser(await api.userMe()); await loadProfile().catch(e => { if(e.status === 401) throw e }) }
+   } catch (e) {
+     if (e.status !== 401) throw e
++    if (!to.meta.admin) clearUser()
+     return { path: to.meta.admin ? '/admin/login' : '/login', query: { redirect: to.fullPath } }
+   }
+ })
+ window.addEventListener('session-expired', e => {
+   const admin = e.detail === 'admin'
+-  auth[admin ? 'admin' : 'user'] = null
++  if (admin) auth.admin = null
++  else clearUser()
+   router.replace({ path: admin ? '/admin/login' : '/login', query: { redirect: router.currentRoute.value.fullPath } })
+ })
+ export default router
+--- a/web/src/views/QuestionList.vue
++++ b/web/src/views/QuestionList.vue
+@@ -2,14 +2,15 @@
+ import { onMounted, ref } from 'vue'
+ import { useRoute, useRouter } from 'vue-router'
+ import { api, query } from '../api'
++import { auth } from '../auth'
+ import Filters from '../components/Filters.vue'
+ import Pagination from '../components/Pagination.vue'
+ import QuestionRows from '../components/QuestionRows.vue'
+ const route=useRoute(),router=useRouter()
+-const filters=ref({module:'',year:'',region:'',exam_type:'',variant:'',q:'',...route.query})
+-const data=ref({items:[],total:0}),busy=ref(false),starting=ref(false),error=ref(''),page=ref(Number(route.query.page)||1),count=ref(20)
++const filters=ref({module:Object.hasOwn(route.query,'module') ? route.query.module : auth.profile?.default_module || '',year:'',region:'',exam_type:'',variant:'',q:'',...route.query})
++const data=ref({items:[],total:0}),busy=ref(false),starting=ref(false),error=ref(''),page=ref(Number(route.query.page)||1),count=ref([10,20,50].includes(Number(route.query.limit)) ? Number(route.query.limit) : auth.profile?.default_limit || 20)
+ async function load(p=1){busy.value=true;error.value='';page.value=p;try{data.value=await api.questions({...filters.value,page:p,size:20})}catch(e){error.value=e.message}finally{busy.value=false}}
+-async function apply(){await router.replace(`/questions?${query({...filters.value,page:1})}`);await load()}
++async function apply(){const values=new URLSearchParams(query({...filters.value,page:1}));values.set('module',filters.value.module||'');await router.replace(`/questions?${values}`);await load()}
+ async function start(id){starting.value=true;error.value='';try{const s=await api.createSession('single',id ? {question_ids:[id]} : {...filters.value,limit:count.value});await router.push(`/practice?session=${s.session_id}`)}catch(e){error.value=e.message}finally{starting.value=false}}
+ onMounted(()=>load(page.value))
+ </script>
+--- a/web/src/views/Practice.vue
++++ b/web/src/views/Practice.vue
+@@ -11,6 +11,7 @@
+ const result=computed(()=>session.value?.results?.find(r=>r.question_id===question.value?.id))
+ const label=computed(()=>question.value?.label)
+ const progress=computed(()=>session.value ? Math.round(count.value/session.value.total*100) : 0)
++const readingSize=computed(()=>[16,18,20].includes(auth.profile?.reading_size) ? auth.profile.reading_size : 16)
+ function track(){if(question.value&&!done.value){const id=question.value.id;durations.value[id]=(durations.value[id]||0)+(Date.now()-at);editGeneration++}at=Date.now()}
+ function payload(){return session.value.question_ids.map(id=>({question_id:id,answer:answers.value[id]||'',duration_ms:Math.round(durations.value[id]||0)}))}
+ function showConflict(e){if(e.status===409){conflict.value=true;saveState.value='保存冲突：本页作答尚未保存';error.value='其他窗口已更新这份练习。本页选择已保留，请先记录本页答案，再加载已保存草稿。'}}
+@@ -67,7 +68,7 @@
+ defineExpose({savePending:async()=>{if(submitting.value)throw new Error('正在提交或加载练习，请完成后再退出');await flush()}})
+ onBeforeUnmount(()=>{alive=false;clearTimeout(saveTimer);clearInterval(clock);window.removeEventListener('beforeunload',beforeUnload)})
+ </script>
+-<template><p v-if="busy" class="empty" role="status">正在准备练习…</p><p v-if="error" class="notice err" role="alert">{{ error }}</p><div v-if="conflict" class="notice warn" role="alert"><p>本页作答尚未保存，自动保存和交卷已暂停。请记录当前选择，再加载服务器草稿。</p><button :disabled="submitting" @click="reloadDraft">加载已保存草稿</button></div><div v-if="session&&!busy" class="practice-layout">
++<template><p v-if="busy" class="empty" role="status">正在准备练习…</p><p v-if="error" class="notice err" role="alert">{{ error }}</p><div v-if="conflict" class="notice warn" role="alert"><p>本页作答尚未保存，自动保存和交卷已暂停。请记录当前选择，再加载服务器草稿。</p><button :disabled="submitting" @click="reloadDraft">加载已保存草稿</button></div><div v-if="session&&!busy" class="practice-layout pc-reading" :style="{'--pc-reading-size':readingSize+'px'}">
+ <section class="practice-main"><div class="practice-header"><div><p class="eyebrow">{{ done ? '练习复盘' : session.kind==='paperset' ? '真题作答' : '专注练习' }}</p><h1>{{ question.module }} <span class="muted">/ {{ index+1 }} <small>共 {{ session.total }} 题</small></span></h1></div><span class="tag">{{ {single:'单选题',multi:'多选题 · 可选多项',judge:'判断题',other:'暂无答案'}[question.answer_type] }}</span></div>
+ <div v-if="done" class="score-banner"><strong>{{ session.correct }} <small>/ {{ session.total }}</small></strong><div><h2>本次正确率 {{ Math.round(session.correct/session.total*100) }}%</h2><p>共作答 {{ count }} 题 · 错题已自动收录 · 点击题号查看复盘</p></div></div>
+ <article class="question-sheet"><details v-if="question.material_body" class="material" open><summary>阅读材料</summary><RichText :text="question.material_body" /><details v-if="question.material_with_text!==question.material_body"><summary>查看文字识别版本</summary><RichText :text="question.material_with_text" /></details></details>
+--- /dev/null
++++ b/test-artifacts/personal_center_regression.py
+@@ -0,0 +1,499 @@
++"""Real browser personal-center regression against an isolated service only.
++Usage: python3 test-artifacts/personal_center_regression.py BASE [ISOLATED_DB] [--red]
++"""
++import datetime, json, sqlite3, sys, time
++from pathlib import Path
++from playwright.sync_api import sync_playwright, expect
++
++base = sys.argv[1].rstrip('/')
++red = '--red' in sys.argv
++output = Path('test-artifacts/personal-center')
++output.mkdir(exist_ok=True)
++report = {'checks': [], 'console_errors': []}
++db = None
++if len(sys.argv)>2 and sys.argv[2]!='--red':
++    db_path=Path(sys.argv[2]).resolve()
++    assert db_path.is_relative_to((output/'_work').resolve()), 'Only an isolated _work database may be used'
++    db=sqlite3.connect(db_path)
++if not red and not db:
++    raise SystemExit('Pass the isolated test-artifacts/personal-center/_work database for the complete green regression')
++with sync_playwright() as pw:
++    browser = pw.chromium.launch(executable_path='/usr/bin/google-chrome', headless=True, args=['--no-sandbox'])
++    context = browser.new_context(viewport={'width': 1440, 'height': 1000}, reduced_motion='reduce')
++    page = context.new_page()
++    page.on('pageerror', lambda e: report['console_errors'].append(str(e)))
++    page.goto(base + '/login')
++    def api(path, method='GET', data=None, tab=page):
++        return tab.evaluate('''async ({path,method,data})=>{const o={method,credentials:'same-origin',headers:{'Content-Type':'application/json'}};
++          if(data!==null)o.body=JSON.stringify(data);const r=await fetch('/api'+path,o);return {status:r.status,body:await r.json()}}''', {'path':path,'method':method,'data':data})
++    username = 'personal_' + str(time.time_ns())
++    password = 'personal-test-password'
++    assert api('/auth/register','POST',{'username':username,'password':password})['status']==201
++    assert api('/auth/login','POST',{'username':username,'password':password})['status']==200
++    page.goto(base + '/account')
++    if red:
++        page.screenshot(path=str(output/'task3-red-old-account.png'), full_page=True)
++    expect(page.get_by_role('tab', name='学习总览', exact=True)).to_be_visible(timeout=5000)
++    if red:
++        raise AssertionError('The page already has personal-center tabs; the old-page red check is no longer applicable')
++    for name in ['复习助手','资料与偏好','账户安全']:
++        expect(page.get_by_role('tab',name=name,exact=True)).to_be_visible()
++    expect(page.locator('[data-chart="trend"]')).to_be_visible()
++    expect(page.locator('[data-chart="modules"]')).to_be_visible()
++    expect(page.locator('[data-chart="activity"]')).to_be_visible()
++    expect(page.locator('[data-chart="goal"]')).to_have_count(2)
++    page.get_by_role('tab',name='学习总览',exact=True).focus()
++    page.get_by_role('tab',name='学习总览',exact=True).press('ArrowRight')
++    expect(page.get_by_role('tab',name='复习助手',exact=True)).to_have_attribute('aria-selected','true')
++    page.get_by_role('tab',name='复习助手',exact=True).press('End')
++    expect(page.get_by_role('tab',name='账户安全',exact=True)).to_have_attribute('aria-selected','true')
++    page.get_by_role('tab',name='账户安全',exact=True).press('Home')
++    expect(page.get_by_role('tab',name='学习总览',exact=True)).to_have_attribute('aria-selected','true')
++    report['checks'].append('four tabs and four types of charts use the real empty dashboard')
++    page.screenshot(path=str(output/'account-desktop.png'),full_page=True)
++    page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    page.get_by_label('昵称',exact=True).fill('学习工作台测试')
++    page.get_by_label('简介',exact=True).fill('合成浏览器验收资料')
++    page.get_by_label('每日作答目标',exact=True).fill('25')
++    page.get_by_label('每日分钟目标',exact=True).fill('35')
++    page.get_by_label('默认题量',exact=True).select_option('10')
++    page.get_by_label('练习正文字号',exact=True).select_option('20')
++    future_exam=(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).date()+datetime.timedelta(days=30)).isoformat()
++    page.get_by_label('考试名称',exact=True).fill('国考合成计划')
++    page.get_by_label('考试日期',exact=True).fill(future_exam)
++    expect(page.locator('.pc-avatar-options button')).to_have_count(8)
++    page.get_by_role('button',name='头像样式 3',exact=True).click()
++    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(page.get_by_role('status').filter(has_text='资料与偏好已保存')).to_be_visible()
++    stored=api('/account/profile')['body']
++    assert stored['nickname']=='学习工作台测试' and stored['daily_questions']==25 and stored['avatar_id']==3 and stored['reading_size']==20 and stored['default_limit']==10
++    expect(page.locator('.topbar-user .pc-avatar')).to_have_class('avatar pc-avatar pc-avatar-3')
++    expect(page.locator('.topbar-user')).to_contain_text('学习工作台测试')
++    expect(page.locator('.pc-exam strong')).to_contain_text('距离考试还有')
++    assert stored['exam_date']==future_exam
++    page.reload()
++    page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    expect(page.get_by_label('昵称',exact=True)).to_have_value('学习工作台测试')
++    report['checks'].append('full profile PUT persists across refresh and updates topbar')
++    page.get_by_label('昵称',exact=True).fill('准备退出的资料')
++    page.route('**/api/auth/logout',lambda route:route.fulfill(status=503,content_type='application/json',body=json.dumps({'error':'验收：退出暂时不可用'})))
++    page.once('dialog',lambda dialog:dialog.accept());page.locator('.topbar').get_by_role('button',name='退出',exact=True).click()
++    expect(page.get_by_role('alert').filter(has_text='退出暂时不可用')).to_be_visible()
++    page.unroute('**/api/auth/logout')
++    assert api('/auth/me')['status']==200
++    page.get_by_label('昵称',exact=True).fill('退出失败后保护资料')
++    page.once('dialog',lambda dialog:dialog.dismiss());page.get_by_role('tab',name='账户安全',exact=True).click()
++    expect(page.get_by_label('昵称',exact=True)).to_have_value('退出失败后保护资料')
++    page.once('dialog',lambda dialog:dialog.dismiss());page.locator('.sidebar nav').get_by_role('link',name='学习记录',exact=True).click()
++    expect(page).to_have_url(base+'/account')
++    page.once('dialog',lambda dialog:dialog.accept());page.get_by_role('button',name='放弃修改并重载',exact=True).click()
++    expect(page.get_by_label('昵称',exact=True)).to_have_value('学习工作台测试')
++    report['checks'].append('logout 503 keeps identity and subsequent newly edited profile still has tab/router protection')
++    other=context.new_page();other.goto(base+'/account');other.get_by_role('tab',name='资料与偏好',exact=True).click()
++    page.get_by_label('昵称',exact=True).fill('第一窗口')
++    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(page.get_by_role('status').filter(has_text='资料与偏好已保存')).to_be_visible()
++    other.get_by_label('昵称',exact=True).fill('未覆盖的本地输入')
++    other.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(other.get_by_role('alert').filter(has_text='其他窗口')).to_be_visible()
++    expect(other.get_by_label('昵称',exact=True)).to_have_value('未覆盖的本地输入')
++    other.once('dialog',lambda d:d.dismiss());other.get_by_role('button',name='重新加载服务器资料',exact=True).click()
++    expect(other.get_by_label('昵称',exact=True)).to_have_value('未覆盖的本地输入')
++    other.once('dialog',lambda d:d.accept());other.get_by_role('button',name='重新加载服务器资料',exact=True).click()
++    expect(other.get_by_label('昵称',exact=True)).to_have_value('第一窗口')
++    other.close()
++    page.get_by_label('昵称',exact=True).fill('保护未保存资料')
++    page.once('dialog',lambda d:d.dismiss());page.get_by_role('tab',name='账户安全',exact=True).click()
++    expect(page.get_by_label('昵称',exact=True)).to_have_value('保护未保存资料')
++    page.once('dialog',lambda d:d.accept());page.get_by_role('tab',name='账户安全',exact=True).click()
++    page.get_by_label('当前密码',exact=True).fill('wrong-current-password')
++    page.get_by_label('新密码',exact=True).fill('new-personal-password')
++    page.get_by_label('确认新密码',exact=True).fill('new-personal-password')
++    page.get_by_role('button',name='修改密码',exact=True).click()
++    expect(page.get_by_role('alert').filter(has_text='原密码错误')).to_be_visible()
++    assert api('/auth/me')['status']==200
++    report['checks'].append('profile CAS retains local input, confirmed reload, dirty tab guard, password 400 retains login')
++    page.once('dialog',lambda d:d.accept())
++    for name in ['学习总览','复习助手','资料与偏好','账户安全']:
++        page.get_by_role('tab',name=name,exact=True).click()
++        page.set_viewport_size({'width':375,'height':812})
++        assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), name
++        page.screenshot(path=str(output/('account-mobile-'+name+'.png')),full_page=True)
++    report['checks'].append('all four tabs fit 375px without page overflow')
++
++    # The allowed 40-character exam name must remain within the phone viewport.
++    page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    page.get_by_label('考试名称',exact=True).fill('W'*40)
++    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(page.get_by_role('status').filter(has_text='资料与偏好已保存')).to_be_visible()
++    assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), '40-character exam name overflow'
++    page.screenshot(path=str(output/'account-exam-name-boundary-mobile.png'),full_page=True)
++    page.get_by_label('考试名称',exact=True).fill('国考合成计划')
++    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(page.get_by_role('status').filter(has_text='资料与偏好已保存')).to_be_visible()
++
++    # Everything below is driven by real HTTP writes in the isolated service.
++    page.set_viewport_size({'width':1440,'height':1000})
++    if db:
++        qid,module,correct,concept_id=db.execute("SELECT q.id,q.module,q.answer,c.id FROM question q JOIN latest_label l ON l.question_id=q.id JOIN concept c ON c.module=l.subject AND c.name=l.tertiary WHERE q.answer_type='single' AND q.option_count>=2 LIMIT 1").fetchone()
++        wrong=next(v[0] for v in db.execute('SELECT label FROM option WHERE question_id=? ORDER BY label',(qid,)) if v[0]!=correct)
++    else:
++        question=api('/questions?size=1')['body']['items'][0]
++        qid,module,correct,concept_id=question['id'],question['module'],'A',None
++        wrong='B'
++    def create(ids):
++        result=api('/practice/sessions','POST',{'kind':'single','spec':{'question_ids':ids}})
++        assert result['status']==200,result
++        return result['body']['session_id']
++    for i in range(6):
++        sid=create([qid])
++        result=api(f'/practice/sessions/{sid}/submit','POST',{'answers':[{'question_id':qid,'answer':correct if i==0 else wrong,'duration_ms':60000}],'draft_revision':0})
++        assert result['status']==200,result
++    unfinished=create([qid])
++    assert api(f'/practice/sessions/{unfinished}/answers','PUT',{'answers':[{'question_id':qid,'answer':wrong,'duration_ms':500}],'draft_revision':0})['status']==200
++    assert api(f'/favorites/{qid}','POST',{'action':'add'})['status']==200
++    d=api('/account/dashboard?days=30')['body']
++    assert d['today']['answered']==6 and d['today']['duration_ms']==360000
++    if db:
++        assert d['today']['correct']==1 and abs(d['today']['accuracy']-100/6)<.001
++        assert d['review']['weak_concepts'][0]['concept_id']==concept_id
++    page.reload()
++    expect(page.locator('.pc-goal-count').first).to_contain_text('6')
++    expect(page.locator('.pc-goal-count').nth(1)).to_contain_text('6.0')
++    expect(page.locator('.pc-achievement-unlocked')).to_contain_text('首次作答')
++    expect(page.locator('.pc-day')).to_have_count(90)
++    page.get_by_text('查看今日目标数据表',exact=True).click()
++    expect(page.locator('.pc-today tbody tr')).to_have_count(2)
++    page.locator('[data-chart="goal"] svg').first.focus()
++    assert '6 / 25 次' in page.locator('[data-chart="goal"] svg').first.get_attribute('aria-label')
++    row=page.locator('.pc-module-row').filter(has_text=module)
++    row.focus();expect(page.locator('[data-chart="modules"] .pc-chart-value')).to_contain_text('1 / 6')
++    day=page.locator('.pc-day-selected');day.focus();day.press('ArrowUp')
++    selected_day=page.locator('.pc-day-selected').get_attribute('aria-label')
++    assert selected_day.startswith(d['activity'][-2]['date']), {'expected':d['activity'][-2]['date'],'actual':selected_day}
++    page.locator('.pc-day').first.hover()
++    expect(page.locator('[data-chart="activity"] .pc-chart-value')).to_contain_text(d['activity'][0]['date'])
++    # Hover previews a date without moving the keyboard's one tab stop.
++    assert page.locator('.pc-day-selected').get_attribute('aria-label').startswith(d['activity'][-2]['date'])
++    expect(page.locator('.pc-day[tabindex="0"]')).to_have_count(1)
++    page.mouse.move(0,0)
++    page.locator('.pc-trend-plot svg').first.locator('g').last.hover()
++    expect(page.locator('[data-chart="trend"] .pc-chart-value')).to_contain_text(d['trend'][-1]['date'])
++    page.mouse.move(0,0)
++    page.locator('.pc-trend-plot').focus();page.locator('.pc-trend-plot').press('Home')
++    expect(page.locator('[data-chart="trend"] .pc-chart-value')).to_contain_text(d['trend'][0]['date'])
++    page.get_by_text('查看趋势数据表',exact=True).click()
++    expect(page.locator('[data-chart="trend"] tbody tr')).to_have_count(30)
++    report['checks'].append('real six submissions drive 16.7% accuracy, six minutes, achievements and keyboard chart values; no double-counted module duration')
++
++    # Hold an actual response then return it after the newer 90-day response.
++    pending=[]
++    pattern='**/api/account/dashboard?days=7'
++    page.route(pattern,lambda route:pending.append(route))
++    page.get_by_role('button',name='7 天',exact=True).click()
++    expect(page.get_by_text('正在更新…',exact=True)).to_be_visible()
++    assert len(pending)==1
++    page.get_by_role('button',name='90 天',exact=True).click()
++    expect(page.locator('[data-chart="trend"] select option')).to_have_count(90)
++    pending.pop().continue_();page.unroute(pattern)
++    page.wait_for_timeout(200)
++    expect(page.locator('[data-chart="trend"] select option')).to_have_count(90)
++    page.route('**/api/account/dashboard?days=7',lambda route:route.fulfill(status=500,content_type='application/json',body=json.dumps({'error':'验收：临时读取失败'})))
++    page.get_by_role('button',name='7 天',exact=True).click()
++    expect(page.get_by_role('alert').filter(has_text='临时读取失败')).to_be_visible()
++    page.unroute('**/api/account/dashboard?days=7')
++    page.get_by_role('button',name='重试学习数据',exact=True).click()
++    expect(page.locator('[data-chart="trend"] select option')).to_have_count(7)
++    report['checks'].append('late real 7-day response cannot replace newer 90-day data; failed dashboard can retry')
++
++    page.get_by_role('tab',name='复习助手',exact=True).click()
++    page.get_by_role('link',name='继续练习',exact=True).first.click()
++    expect(page).to_have_url(base+f'/practice?session={unfinished}')
++    expect(page.locator('.option.selected .option-letter')).to_have_text(wrong)
++    assert page.locator('.question-stem').evaluate('e=>getComputedStyle(e).fontSize')=='20px'
++    assert page.locator('.options .rich-text').first.evaluate('e=>getComputedStyle(e).fontSize')=='20px'
++    page.locator('.option').filter(has=page.locator('.option-letter',has_text=wrong)).click()
++    expect(page.get_by_text('作答已保存',exact=True)).to_be_visible()
++    page.get_by_role('button',name='提交练习',exact=True).first.click()
++    expect(page.get_by_text('官方解析',exact=True)).to_be_visible()
++    assert page.locator('.analysis .rich-text').first.evaluate('e=>getComputedStyle(e).fontSize')=='20px'
++    def account_review():
++        page.goto(base+'/account');page.get_by_role('tab',name='复习助手',exact=True).click()
++    account_review()
++    page.get_by_role('button',name='开始优先错题复练',exact=True).click()
++    expect(page.locator('.options')).to_be_visible()
++    result=api('/practice/sessions/'+page.url.split('session=')[1])['body']
++    assert result['kind']=='wrongbook' and qid in result['question_ids']
++    account_review()
++    page.get_by_role('button',name='练习此模块',exact=True).first.click()
++    expect(page.locator('.options')).to_be_visible()
++    result=api('/practice/sessions/'+page.url.split('session=')[1])['body']
++    assert result['kind']=='single' and result['spec']['module']==module
++    if db:
++        account_review();page.get_by_role('button',name='复练此考点',exact=True).first.click()
++        expect(page.locator('.options')).to_be_visible()
++        result=api('/practice/sessions/'+page.url.split('session=')[1])['body']
++        assert result['kind']=='concept' and result['spec']['concept_id']==concept_id
++    favorite_result=api('/practice/sessions','POST',{'kind':'favorite','spec':{'limit':10}})
++    assert favorite_result['status']==200
++    favorite_session=favorite_result['body']['session_id']
++    account_review()
++    favorite_item=page.locator('.pc-resume-list article').filter(has=page.get_by_role('heading',name='收藏练习 · 1 题',exact=True))
++    expect(favorite_item).to_be_visible()
++    favorite_item.get_by_role('link',name='继续练习',exact=True).click()
++    expect(page).to_have_url(base+f'/practice?session={favorite_session}')
++    report['checks'].append('resume preserves saved answers and favorite session type; real wrongbook/module/concept buttons create compatible sessions; saved reading size applies to stems/options/analysis')
++
++    # Profile input survives API failure, saved preferences apply, explicit URL wins.
++    page.goto(base+'/account');page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    page.get_by_label('默认模块',exact=True).select_option(module)
++    page.get_by_label('昵称',exact=True).fill('400保留本地输入')
++    page.route('**/api/account/profile',lambda route:route.fulfill(status=400,content_type='application/json',body=json.dumps({'error':'验收：字段校验失败'})) if route.request.method=='PUT' else route.continue_())
++    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(page.get_by_role('alert').filter(has_text='字段校验失败')).to_be_visible()
++    expect(page.get_by_label('昵称',exact=True)).to_have_value('400保留本地输入')
++    assert api('/auth/me')['status']==200
++    page.unroute('**/api/account/profile')
++    # Hold PUT: disable edits and repeat-submit and do not mark saved before ACK.
++    puts=[]
++    page.route('**/api/account/profile',lambda route:puts.append(route) if route.request.method=='PUT' else route.continue_())
++    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(page.get_by_label('昵称',exact=True)).to_be_disabled()
++    expect(page.get_by_role('button',name='正在保存…',exact=True)).to_be_disabled()
++    page.get_by_role('tab',name='学习总览',exact=True).click()
++    expect(page.get_by_label('昵称',exact=True)).to_be_visible()
++    assert len(puts)==1
++    puts.pop().continue_();page.unroute('**/api/account/profile')
++    expect(page.get_by_role('status').filter(has_text='资料与偏好已保存')).to_be_visible()
++    page.get_by_label('昵称',exact=True).fill('路由与退出保护')
++    assert page.evaluate('''()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented}''')
++    page.once('dialog',lambda dialog:dialog.dismiss());page.locator('.sidebar nav').get_by_role('link',name='题库练习',exact=True).click()
++    expect(page).to_have_url(base+'/account')
++    page.once('dialog',lambda dialog:dialog.dismiss());page.locator('.topbar').get_by_role('button',name='退出',exact=True).click()
++    assert api('/auth/me')['status']==200
++    expect(page.get_by_label('昵称',exact=True)).to_have_value('路由与退出保护')
++    page.once('dialog',lambda dialog:dialog.accept());page.locator('.sidebar nav').get_by_role('link',name='题库练习',exact=True).click()
++    expect(page.locator('.session-controls select')).to_have_value('10')
++    expect(page.get_by_role('combobox',name='模块',exact=True)).to_have_value(module)
++    page.goto(base+'/questions?module=&limit=50')
++    expect(page.get_by_role('combobox',name='模块',exact=True)).to_have_value('')
++    expect(page.locator('.session-controls select')).to_have_value('50')
++    page.goto(base+'/questions')
++    expect(page.get_by_role('combobox',name='模块',exact=True)).to_have_value(module)
++    page.get_by_role('combobox',name='模块',exact=True).select_option('')
++    page.get_by_role('button',name='筛选 / 搜索',exact=True).click()
++    page.wait_for_function("location.search.includes('page=1')")
++    expect(page.get_by_role('combobox',name='模块',exact=True)).to_have_value('')
++    assert page.evaluate("new URL(location.href).searchParams.has('module') && new URL(location.href).searchParams.get('module')===''"), 'All modules must remain an explicit URL override'
++    page.reload();expect(page.get_by_role('combobox',name='模块',exact=True)).to_have_value('')
++    report['checks'].append('400 preserves input/login, pending PUT freezes edits/tabs and prevents duplicates; refresh/router/logout guard dirty profile; saved defaults respect explicit URL')
++
++    page.goto(base+'/account');page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    page.route('**/api/account/export?days=30',lambda route:route.fulfill(status=400,content_type='application/json',body=json.dumps({'error':'导出超过 5000 条，请缩小范围'})))
++    page.get_by_role('button',name='下载 CSV',exact=True).click()
++    expect(page.get_by_role('alert').filter(has_text='5000')).to_be_visible()
++    page.unroute('**/api/account/export?days=30')
++    with page.expect_download() as download_event:
++        page.get_by_role('button',name='下载 CSV',exact=True).click()
++    download=download_event.value
++    assert download.suggested_filename=='行测研习-个人作答记录.csv'
++    download.save_as(str(output/'task3-personal-records.csv'))
++    assert (output/'task3-personal-records.csv').read_bytes().startswith(b'\xef\xbb\xbf')
++    report['checks'].append('actual same-origin CSV download uses fixed client filename and BOM; over-limit API error visible')
++
++    # New Cookie in a second browser context, never copy tokens into JS or URLs.
++    second=browser.new_context(viewport={'width':1200,'height':900});second_page=second.new_page();second_page.goto(base+'/login')
++    assert api('/auth/login','POST',{'username':username,'password':password},tab=second_page)['status']==200
++    second_page.goto(base+'/account');second_page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    expect(second_page.get_by_label('练习正文字号',exact=True)).to_have_value('20')
++    page.reload();page.get_by_role('tab',name='账户安全',exact=True).click()
++    expect(page.get_by_role('button',name='撤销此会话',exact=True)).to_have_count(1)
++    assert len(api('/account/sessions')['body']['items'])==2
++    page.once('dialog',lambda dialog:dialog.dismiss());page.get_by_role('button',name='撤销此会话',exact=True).click()
++    assert api('/auth/me',tab=second_page)['status']==200
++    page.once('dialog',lambda dialog:dialog.accept());page.get_by_role('button',name='撤销此会话',exact=True).click()
++    expect(page.get_by_role('button',name='撤销此会话',exact=True)).to_have_count(0)
++    assert api('/auth/me',tab=second_page)['status']==401 and api('/auth/me')['status']==200
++    assert api('/auth/login','POST',{'username':username,'password':password},tab=second_page)['status']==200
++    page.reload();page.get_by_role('tab',name='账户安全',exact=True).click()
++    page.once('dialog',lambda dialog:dialog.accept());page.get_by_role('button',name='退出其他会话',exact=True).click()
++    expect(page.get_by_role('status').filter(has_text='当前会话已保留')).to_be_visible()
++    assert api('/auth/me',tab=second_page)['status']==401 and api('/auth/me')['status']==200
++    page.get_by_role('button',name='重新计算考点统计',exact=True).click()
++    expect(page.get_by_role('status').filter(has_text='已重新计算')).to_be_visible()
++    report['checks'].append('second device loads server preferences, single revoke requires confirmation, revoke-others preserves current Cookie; original statistics rebuild works')
++    second.close()
++
++    if db:
++        uid=api('/auth/me')['body']['id']
++        # Historical metadata and page 2 require >20 synthetic active sessions.
++        future=(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
++        for i in range(22):
++            db.execute('INSERT INTO app_session(token,user_id,expires_at,public_id) VALUES(?,?,?,?)',('fixture-session-'+str(time.time_ns()),uid,future,format(time.time_ns(),'032x')))
++        db.commit()
++        page.reload();page.get_by_role('tab',name='账户安全',exact=True).click()
++        expect(page.locator('.pc-session-list>li')).to_have_count(20)
++        expect(page.get_by_role('heading',name='历史会话 / 信息未知',exact=True).first).to_be_visible()
++        current_item=page.locator('.pc-session-list>li').filter(has_text='当前设备')
++        expect(current_item.get_by_role('button',name='撤销此会话',exact=True)).to_have_count(0)
++        payload=api('/account/sessions')['body']
++        assert payload['total']==23 and all('token' not in row and 'hash' not in row for row in payload['items'])
++        page.get_by_role('navigation',name='登录会话分页',exact=True).get_by_role('button',name='下一页',exact=True).click()
++        expect(page.locator('.pc-session-list>li')).to_have_count(3)
++        page.once('dialog',lambda dialog:dialog.accept());page.get_by_role('button',name='退出其他会话',exact=True).click()
++        expect(page.locator('.pc-session-list>li')).to_have_count(1)
++        assert api('/auth/me')['status']==200
++        report['checks'].append('23 real isolated sessions paginate 20/3, legacy nullable metadata shows unknown; current session has no DELETE control and responses contain no token/hash')
++
++        label_id,tertiary=db.execute('SELECT id,tertiary FROM latest_label WHERE question_id=?',(qid,)).fetchone()
++        db.execute('UPDATE label SET tertiary=NULL WHERE id=?',(label_id,));db.commit()
++        try:
++            page.reload();page.get_by_role('tab',name='复习助手',exact=True).click()
++            expect(page.get_by_text('先做模块练习。',exact=False)).to_be_visible()
++            expect(page.get_by_role('button',name='复练此考点',exact=True)).to_have_count(0)
++        finally:
++            db.execute('UPDATE label SET tertiary=? WHERE id=?',(tertiary,label_id));db.commit()
++        report['checks'].append('actual unmapped latest label reports sparse mapping and does not create invalid concept practice')
++
++        # All tabs with populated data and local tables must also fit small phones.
++        page.reload();page.set_viewport_size({'width':375,'height':812})
++        for name in ['学习总览','复习助手','资料与偏好','账户安全']:
++            page.get_by_role('tab',name=name,exact=True).click()
++            assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'populated '+name
++            page.screenshot(path=str(output/('account-populated-mobile-'+name+'.png')),full_page=True)
++        page.set_viewport_size({'width':1440,'height':1000})
++        page.get_by_role('tab',name='学习总览',exact=True).click()
++        page.screenshot(path=str(output/'account-populated-desktop.png'),full_page=True)
++
++        # Fixtures only touch the explicitly validated _work DB, never the real var DB.
++        yesterday=(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).date()-datetime.timedelta(days=1)).isoformat()
++        db.execute('UPDATE user_profile SET exam_date=?,revision=revision+1 WHERE user_id=?',(yesterday,uid));db.commit()
++        page.reload();expect(page.get_by_text('考试日期已过',exact=True)).to_be_visible()
++        page.get_by_role('tab',name='资料与偏好',exact=True).click()
++        page.get_by_label('昵称',exact=True).fill('保持本人到期日期')
++        page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++        expect(page.get_by_role('status').filter(has_text='资料与偏好已保存')).to_be_visible()
++        assert api('/account/profile')['body']['exam_date']==yesterday
++        page.get_by_label('考试日期',exact=True).fill((datetime.date.fromisoformat(yesterday)-datetime.timedelta(days=1)).isoformat())
++        page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++        expect(page.locator('#pc-date-hint')).to_contain_text('未来日期')
++        page.once('dialog',lambda dialog:dialog.accept());page.get_by_role('button',name='放弃修改并重载',exact=True).click()
++        expect(page.get_by_label('考试日期',exact=True)).to_have_value(yesterday)
++        # A Beijing March 1 in a leap year is February 29 in UTC. Adding five
++        # years must operate on the calendar date rather than the prior UTC day.
++        page.evaluate("""()=>{window.__personalNativeDate=Date;window.Date=class extends window.__personalNativeDate {
++          constructor(...args){super(...(args.length?args:['2028-03-01T00:00:00+08:00']))}
++        }}""")
++        page.get_by_label('考试日期',exact=True).fill('2033-03-02')
++        page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++        expect(page.locator('#pc-date-hint')).to_have_text('新设置的日期需为北京时间未来日期，最多五年后')
++        page.evaluate('()=>{window.Date=window.__personalNativeDate;delete window.__personalNativeDate}')
++        page.once('dialog',lambda dialog:dialog.accept());page.get_by_role('button',name='放弃修改并重载',exact=True).click()
++        expect(page.get_by_label('考试日期',exact=True)).to_have_value(yesterday)
++        report['checks'].append('stored expired exam date can remain while editing nickname; new past dates and the Beijing leap-year five-year calendar boundary reject inline')
++
++    # API blob error must keep the shared 401 flow, and a new user must not inherit cache.
++    page.route('**/api/account/export?days=30',lambda route:route.fulfill(status=401,content_type='application/json',body=json.dumps({'error':'验收：会话失效'})))
++    page.get_by_role('button',name='下载 CSV',exact=True).click()
++    expect(page).to_have_url(base+'/login?redirect=/account')
++    page.unroute('**/api/account/export?days=30')
++    # Actual logout clears the old Cookie before switching identity.
++    assert api('/auth/logout','POST')['status']==200
++    bob='personal_bob_'+str(time.time_ns())
++    assert api('/auth/register','POST',{'username':bob,'password':password})['status']==201
++    page.get_by_label('用户名',exact=True).fill(bob);page.get_by_label('密码',exact=True).fill(password)
++    page.get_by_role('button',name='登录',exact=True).click()
++    expect(page.get_by_role('tab',name='学习总览',exact=True)).to_be_visible()
++    page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    expect(page.get_by_label('练习正文字号',exact=True)).to_have_value('16')
++    expect(page.get_by_label('默认题量',exact=True)).to_have_value('20')
++    page.get_by_role('tab',name='账户安全',exact=True).click()
++    page.get_by_role('button',name='退出当前设备',exact=True).click()
++    expect(page).to_have_url(base+'/login')
++    assert api('/auth/me')['status']==401
++    report['checks'].append('blob 401 dispatches the shared session-expired flow; user switch restores own defaults; current logout uses existing auth API')
++
++    # Login.vue assigns the new identity before the router guard. The preference
++    # owner must therefore be independent of auth.user, including a failed GET.
++    page.get_by_label('用户名',exact=True).fill(username);page.get_by_label('密码',exact=True).fill(password)
++    page.get_by_role('button',name='登录',exact=True).click()
++    expect(page.locator('.session-controls select')).to_have_value('10')
++    page.evaluate("()=>document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/login')")
++    expect(page.get_by_role('heading',name='开始今天的研习',exact=True)).to_be_visible()
++    page.route('**/api/account/profile',lambda route:route.fulfill(status=500,content_type='application/json',body=json.dumps({'error':'验收：偏好暂不可用'})))
++    page.get_by_label('用户名',exact=True).fill(bob);page.get_by_label('密码',exact=True).fill(password)
++    page.get_by_role('button',name='登录',exact=True).click()
++    expect(page.locator('.session-controls select')).to_have_value('20')
++    expect(page.get_by_role('combobox',name='模块',exact=True)).to_have_value('')
++    page.unroute('**/api/account/profile')
++    page.locator('.topbar').get_by_role('link',name='打开个人中心',exact=True).click()
++    page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    expect(page.get_by_label('练习正文字号',exact=True)).to_have_value('16')
++    report['checks'].append('identity switch clears previous preference owner even when profile GET fails after Login.vue assigns the new user')
++
++    # Delay real profile and dashboard reads from A, then log in as B before ACK.
++    def login_as(name):
++        page.evaluate("()=>document.querySelector('#app').__vue_app__.config.globalProperties.$router.push('/login')")
++        expect(page.get_by_role('heading',name='开始今天的研习',exact=True)).to_be_visible()
++        page.get_by_label('用户名',exact=True).fill(name);page.get_by_label('密码',exact=True).fill(password)
++        page.get_by_role('button',name='登录',exact=True).click()
++        expect(page.locator('.session-controls select')).to_be_visible()
++    login_as(username)
++    held_profiles=[];held_dashboards=[];profile_calls=[0]
++    def delayed_profile(route):
++        profile_calls[0]+=1
++        if profile_calls[0]==1:
++            route.fulfill(status=500,content_type='application/json',body=json.dumps({'error':'验收：首次偏好失败'}))
++        elif profile_calls[0]==2:
++            held_profiles.append((route,route.fetch()))
++        else:
++            route.continue_()
++    page.route('**/api/account/profile',delayed_profile)
++    page.route('**/api/account/dashboard?days=30',lambda route:held_dashboards.append((route,route.fetch())))
++    page.goto(base+'/account')
++    expect(page.get_by_role('tab',name='学习总览',exact=True)).to_be_visible()
++    page.wait_for_timeout(200)
++    assert len(held_profiles)==1 and len(held_dashboards)==1
++    page.locator('.topbar').get_by_role('button',name='退出',exact=True).click()
++    expect(page).to_have_url(base+'/login')
++    page.get_by_label('用户名',exact=True).fill(bob);page.get_by_label('密码',exact=True).fill(password)
++    page.get_by_role('button',name='登录',exact=True).click()
++    expect(page.locator('.session-controls select')).to_have_value('20')
++    route,response=held_profiles.pop();route.fulfill(response=response)
++    route,response=held_dashboards.pop();route.fulfill(response=response)
++    page.unroute('**/api/account/profile');page.unroute('**/api/account/dashboard?days=30')
++    page.wait_for_timeout(200)
++    expect(page.locator('.topbar-user')).to_contain_text(bob)
++    expect(page.locator('.topbar-user .pc-avatar')).to_have_class('avatar pc-avatar pc-avatar-0')
++
++    # A PUT really succeeds on the server, but its ACK arrives after 401 + B login.
++    login_as(username)
++    page.locator('.topbar').get_by_role('link',name='打开个人中心',exact=True).click()
++    page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    page.get_by_label('昵称',exact=True).fill('A的延迟保存响应')
++    held_put=[]
++    page.route('**/api/account/profile',lambda route:held_put.append((route,route.fetch())) if route.request.method=='PUT' else route.continue_())
++    page.get_by_role('button',name='保存资料与偏好',exact=True).click()
++    expect(page.get_by_label('昵称',exact=True)).to_be_disabled()
++    assert len(held_put)==1 and held_put[0][1].status==200
++    page.route('**/api/account/export?days=30',lambda route:route.fulfill(status=401,content_type='application/json',body=json.dumps({'error':'验收：保存期间会话失效'})))
++    page.get_by_role('button',name='下载 CSV',exact=True).click()
++    expect(page).to_have_url(base+'/login?redirect=/account')
++    page.unroute('**/api/account/export?days=30')
++    page.get_by_label('用户名',exact=True).fill(bob);page.get_by_label('密码',exact=True).fill(password)
++    page.get_by_role('button',name='登录',exact=True).click()
++    expect(page.get_by_role('tab',name='学习总览',exact=True)).to_be_visible()
++    route,response=held_put.pop();route.fulfill(response=response);page.unroute('**/api/account/profile')
++    page.wait_for_timeout(200)
++    expect(page.locator('.topbar-user')).to_contain_text(bob)
++    expect(page.locator('.topbar-user .pc-avatar')).to_have_class('avatar pc-avatar pc-avatar-0')
++    page.get_by_role('tab',name='资料与偏好',exact=True).click()
++    expect(page.get_by_label('用户名',exact=True)).to_have_value(bob)
++    expect(page.get_by_label('昵称',exact=True)).to_have_value('')
++    expect(page.get_by_label('练习正文字号',exact=True)).to_have_value('16')
++    report['checks'].append('delayed real A dashboard/profile reads and successful PUT ACK after logout/401 cannot replace B nickname/avatar/preferences')
++    browser.close()
++    db.close()
++assert not report['console_errors'], report['console_errors']
++(output/'task3-browser-results.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
++print(json.dumps(report,ensure_ascii=False,indent=2))
+--- a/test-artifacts/round2_fixes_ui.py
++++ b/test-artifacts/round2_fixes_ui.py
+@@ -135,6 +135,7 @@
+     report['checks'].append('same-route query navigation flushes the previous session before remounting')
+ 
+     page.goto(base + '/account')
++    page.get_by_role('tab', name='账户安全', exact=True).click()
+     page.get_by_label('当前密码', exact=True).fill('wrong-current-password')
+     page.get_by_label('新密码', exact=True).fill('new-round2-test-password')
+     page.get_by_label('确认新密码', exact=True).fill('new-round2-test-password')
+--- /dev/null
++++ b/docs/personal-center-task3-report.md
+@@ -0,0 +1,159 @@
++# 个人中心 Task 3：页面与图表实现验证
++
++日期：2026-10-04 开始，2026-10-05 完成开发与本任务验证。前端交付为真实 Vue 页面，沿用蓝白研习主题，以今日双目标和 90 日学习日历作为学习工作台的主线。没有安装依赖、修改后端/schema/构建配置、提交、推送或部署。保留 Task 3 开始前的旧修复。
++
++## 页面与接口接入
++
++`/account` 标题与导航改为“个人中心”。桌面侧栏和顶部用户区可进入；页面四个页签在本地切换，不通过 query 重建表单。
++
++| 页签 | 已实现行为 |
++| --- | --- |
++| 学习总览 | 资料、注册信息、未来/已到/已过考试日期；今日作答与分钟双目标；期间/累计计数、上期绝对增量、双趋势、模块画像、90 日学习日历、连续练习和真实成就 |
++| 复习助手 | 最近未完成练习续做；自动错题优先复练；达到 5 次样本的模块/有效考点复练；标注覆盖、未形成映射提示；收藏和记录入口 |
++| 资料与偏好 | 全字段资料/目标/考试/偏好保存、8 个受控头像、版本提示、字段错误、冲突确认重载、CSV 导出 |
++| 账户安全 | 保留原改密标签、原密码 400 和统计重算；活跃会话分页、单份撤销确认、退出其他确认、当前会话退出 |
++
++API 客户端新增：
++
++| JS 方法 | HTTP | 返回/参数 |
++| --- | --- | --- |
++| `profile()` | GET `/api/account/profile` | Task 1 的完整 Profile |
++| `saveProfile(data)` | PUT `/api/account/profile` | 完整 ProfileUpdate + revision，返回保存后的 Profile |
++| `dashboard(days)` | GET `/api/account/dashboard?days=...` | Task 2 的 Dashboard，7/30/90 |
++| `loginSessions(page)` | GET `/api/account/sessions?page=...` | items,total,page,size，固定每页 20 |
++| `revokeSession(public_id)` | DELETE `/api/account/sessions/{public_id}` | 只提供本人其他会话的删除入口 |
++| `revokeOtherSessions()` | POST `/api/account/sessions/revoke-others` | revoked，保留当前 Cookie |
++| `prioritizedWrongbook()` | POST `/api/account/review/wrongbook` | 现有 Session，进入原练习室 |
++| `exportRecords(days)` | GET `/api/account/export?days=...` | Blob，7/30/90/all |
++
++ProfileUpdate 明确只发送 `nickname,bio,avatar_id,daily_questions,daily_minutes,exam_name,exam_date,default_limit,default_module,reading_size,revision`。不发送 username、created_at 或用户 ID。头像为编号 0–7，字号 16/18/20、题量 10/20/50，未引入 URL 头像或外部图片。
++
++资料 400/409 保留输入；409 不递增本地版本、不自动重发，重载需要确认。保存中禁用字段、重复保存和页签/路由离开。未保存资料或密码输入有换页签、路由、刷新和退出保护；取消可回到页面保存，确认可放弃。退出 API 失败后，不保留任何永久跳过保护的标记。
++
++偏好仅按当前已验证用户 ID 缓存在内存，跨设备恢复依赖服务端 GET。缓存 owner 与 `auth.user` 分开记录，避免登录页先赋新 user 导致旧偏好保留。退出/401 清除缓存；异步响应有 generation/页面存活/用户 ID/用户名检查。保存昵称与头像同步顶部。
++
++题库默认题量/模块读取保存偏好，URL 的明确 `module`/`limit` 优先。用户明确选择全部模块时，保留 `module=`，刷新也不会恢复默认模块。Practice 的题干、材料、选项、官方解析及标注正文实际应用保存字号，不更改整站控件字号。
++
++## 图表与真实口径
++
++- 趋势使用两个独立 SVG 小图，次数与百分比分开坐标；accuracy 为 0–100/null，无样本日期不画 0% 点或连接线。
++- 模块画像显示真实次数、正确率和样本状态；0 样本显示空缺，少于 5 次明确样本不足，不表示 0 分。
++- 日历固定 90 个真实日期，按星期排布；鼠标预览与键盘选中位置分开，避免悬停抢走焦点；只有一个日历 Tab 目标，方向键/Home/End 可选择日期。
++- 目标环最大 100%，同时保留实际分子/目标分母、剩余及超额数值。分钟只用 `today.duration_ms / 60000`，不加 modules 的答案时长或模块 sessions。
++- 四类图表有 accessible name、可读数字摘要及折叠数据表；趋势日期下拉、模块按钮、日历方向键可查看具体值。数据表和日历在自身容器滚动，375px 没有整页横向溢出。
++- 图表只消费实际 Dashboard；没有在生产组件写示例成绩、示例日历或成就。期间快切忽略旧 response，失败提供重试。
++
++续做进入原 session；模块/考点练习调用已有 `createSession('single'/'concept', spec)`；优先错题调用后端规则入口并进入现有 wrongbook session。未映射标签只显示说明，不产生虚构的 concept_id。改密、统计重算、收藏/记录页面与草稿/交卷协议保持原入口。
++
++CSV 请求使用 same-origin Cookie，不在 URL 放凭据；成功 Blob 与错误 JSON 分支共用原 `request()` 的 401 事件处理。客户端下载名固定为 `行测研习-个人作答记录.csv`，400 上限错误可见。下载通过浏览器生成对象 URL，随后释放。
++
++## 测试环境与红灯
++
++测试使用只读打开原库后生成的隔离快照 `test-artifacts/personal-center/_work/task3.sqlite`。隔离库清除了 setting、旧管理员/普通账号、旧会话及个人学习记录，使用新建合成管理员和合成用户。密钥由 CLI 在 `_work/task3-synthetic.key` 新生成；没有读取真实 secret.key，没有改写正式 `var/db`。原题库和已有标签用于有效练习组题，data 目录只读。未调用模型/OCR 或远程服务。
++
++先新增真实 Chrome 验收脚本、构建旧 Account 并启动隔离 CLI，然后运行：
++
++```sh
++python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 --red
++```
++
++实际退出码 1：
++
++```text
++AssertionError: Locator expected to be visible
++element(s) not found: get_by_role("tab", name="学习总览", exact=True)
++```
++
++旧页面截图：[task3-red-old-account.png](../test-artifacts/personal-center/task3-red-old-account.png)。截图与断言均来自真实已登录页面，不是静态图稿。
++
++补充跨账户偏好故障场景时，旧缓存逻辑出现第二条真实浏览器红灯：A 保存默认 10 题，登录页先赋 B 身份，B 的资料 GET 被注入 500，页面仍使用 A 的 10 题。
++
++```text
++Locator expected to have Value '20'
++Actual value: 10
++```
++
++修复为独立 profileUserID owner 后，同一真实登录切换场景转绿。另自审核对并修复退出失败后保护豁免、迟到的资料/看板/保存响应身份检查、全部模块的空值 URL 覆盖和日历悬停与键盘焦点混用。
++
++合法 40 字符 ASCII 考试名称另有真实 375px 红灯：`AssertionError: 40-character exam name overflow`。仅在账户标题/建议文本增加局部换行，修复后转绿。
++
++日期上界另有真实浏览器红绿：将浏览器 JS 日期模拟为北京时间 2028-03-01，新选 2033-03-02 时，旧 UTC 年操作误把上界放宽一天，日期字段未给出预期行内错误。改为对 YYYY-MM-DD 日历日期执行 UTC 年操作后转绿；没有修改后端时钟。
++
++首次监听与 Chrome 启动被沙箱拒绝，按工具要求获得批准后重跑；这些权限失败未计作功能红灯。验收中的临时测试定位错误也没有算成功能缺陷：筛选等待改为等待路由完成，新用户昵称断言按真实空字符串 DTO 修正。
++
++## 绿灯与实际浏览器证据
++
++最终前端构建：
++
++```sh
++cd web
++npm run build
++```
++
++退出码 0：`✓ 60 modules transformed.`，`✓ built in 1.62s`。产物输出到既有 `cmd/gk/web_dist`，没有修改构建配置。
++
++用于真实浏览器的嵌入 CLI：
++
++```sh
++env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -o test-artifacts/personal-center/_work/gk-task3 ./cmd/gk
++env GOMAXPROCS=2 test-artifacts/personal-center/_work/gk-task3 serve --db test-artifacts/personal-center/_work/task3.sqlite --secret-key-file test-artifacts/personal-center/_work/task3-synthetic.key --data data --addr 127.0.0.1:18083
++```
++
++编译退出码 0；本地服务正常启动，浏览器实际请求该 CLI 提供的构建页面。
++
++```sh
++python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite
++```
++
++最终退出码 0，17 组场景通过，`console_errors: []`。结果：[task3-browser-results.json](../test-artifacts/personal-center/task3-browser-results.json)。覆盖：
++
++1. 四页签、四类真实空数据图、页签方向键/Home/End。
++2. 完整资料 PUT、刷新持久化、顶部昵称/头像、8 个头像、未来考试倒计时。
++3. 退出 503 后身份保留，再编辑的页签/路由保护仍有效。
++4. 两页真实 409、本地输入保留、确认重载；原密码错误 400 不误登出。
++5. 四页签空状态、有数据状态以及合法 40 字符考试名称在 375px 无整页溢出。
++6. 六份真实提交得到 6 次作答、1 次答对、16.7% 正确率、6 分钟；未提交草稿不混入；真实成就和图表数值。
++7. 趋势/模块/日历的键盘数值、鼠标预览、数据表、日历单一 Tab 目标。
++8. 实际 7 天请求延后返回不能覆盖 90 天结果；读取失败可重试。
++9. 原 session 续做保留已保存答案，收藏 session 的真实 favorite 类型可识别并续做；优先错题、模块与有效考点均创建真实兼容 session；20px 实际作用于题干、选项、解析。
++10. 注入 profile 400 后输入和登录保留；真实 PUT 延迟确认时字段、保存、离开禁用；刷新、路由、退出保护；默认值与明确 URL/全部模块刷新覆盖。
++11. 实际 CSV 下载、固定文件名、BOM；注入上限 400 可见。
++12. 第二浏览器 context 恢复服务端偏好；撤销确认、其他 Cookie 401、当前 Cookie 保留；原统计重算可用。
++13. 隔离库 23 份活跃会话分页 20/3；历史 NULL 元数据显示未知；当前行无 DELETE 按钮；响应无 token/hash 字段。
++14. 隔离库真实 latest_label 缺映射时显示说明并不生成无效考点；标签 fixture 在 finally 恢复。
++15. 已存昨日考试日期可保留并改昵称；新改过去日期行内拒绝；以浏览器 JS 日期模拟 2028-03-01 北京时间，2033-03-02 超过五年日历上界，行内拒绝。
++16. Blob 401 复用 session-expired；退出/换用户恢复本人默认值；B 的 profile GET 失败时也不继承 A 偏好。
++17. A 的真实 dashboard/profile GET 与成功 PUT 响应在退出/401、B 登录后才返回，不能覆盖 B 的昵称、头像或字号。
++
++500/400/503/401 UI 失败路径通过 Playwright 注入相应响应，明确与真实成功 API 数据区分。CSV 5,001 条边界的服务端正确性由 Task 2 测试验证，本任务没有伪称用 5,001 条浏览器导出。资料、CAS、练习提交/组题、下载、会话撤销和统计重算成功路径均走真实 HTTP 与 SQLite。
++
++原草稿与改密回归：
++
++```sh
++python3 test-artifacts/round2_fixes_ui.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite
++```
++
++最新构建退出码 0，6 组通过，`console_errors: []`：迟到保存、清空多选、双页草稿冲突、交卷冻结、同路由 query 离开保存、原密码 400。该脚本只追加进入“账户安全”页签的定位，没有删除或放宽原断言。结果：[round2-fixes/ui-results.json](../test-artifacts/round2-fixes/ui-results.json)。
++
++`git diff --check` 和两份脚本 `python3 -m py_compile` 均退出码 0。
++
++截图来自真实浏览器：
++
++- [空数据桌面总览](../test-artifacts/personal-center/account-desktop.png)
++- [有数据桌面总览](../test-artifacts/personal-center/account-populated-desktop.png)
++- [有数据 375px 总览](../test-artifacts/personal-center/account-populated-mobile-学习总览.png)
++- [有数据 375px 复习助手](../test-artifacts/personal-center/account-populated-mobile-复习助手.png)
++- [375px 资料与偏好](../test-artifacts/personal-center/account-populated-mobile-资料与偏好.png)
++- [375px 账户安全](../test-artifacts/personal-center/account-populated-mobile-账户安全.png)
++
++## 修改文件与自审
++
++修改：`web/src/views/Account.vue`、`web/src/App.vue`、`web/src/api.js`、`web/src/auth.js`、`web/src/router/index.js`、`web/src/views/QuestionList.vue`、`web/src/views/Practice.vue`。
++
++新增：`web/src/components/account/Avatar.vue`、`Overview.vue`、`Review.vue`、`ProfileForm.vue`、`Security.vue`、`account.css`；charts 下 `GoalRing.vue`、`TrendChart.vue`、`ModuleChart.vue`、`ActivityCalendar.vue`。
++
++验收文件：新增 `test-artifacts/personal_center_regression.py`，最小调整 `test-artifacts/round2_fixes_ui.py` 页签定位；新增本报告及本任务截图/JSON/合成 CSV 证据。构建产物、临时 DB/密钥/CLI 在既有构建目录或 `_work`，不作为生产源码修改。任务修改对照 Task 3 开始快照生成 `test-artifacts/personal-center/task3-review.diff`。
++
++自审确认：数据和 DTO 单位正确；零分母/少样本不伪造分数；profile 不发送身份字段；头像、字号受控；文本使用 Vue 转义；无付费诊断入口；无凭据 URL；全部复习进入既有判分链；退出失败与迟到响应不会跳过保护或写入别人的缓存；Practice 的旧保存/交卷逻辑没有重写。
++
++本任务尚未执行正式库迁移/大库恢复、Linux 发布打包、完整旧 24 项浏览器回归、Go 全量/race/vet 或真实屏幕阅读器/其他浏览器测试，这些属于 Task 4 集成和交付。Chrome DOM 语义、键盘交互、reduced-motion、桌面与 375px 布局已有实际验证。独立规格/质量审查由主代理安排，本报告不将未执行的独立审查标为通过。
+--- /dev/null
++++ b/web/src/components/account/Avatar.vue
+@@ -0,0 +1,6 @@
++<script setup>
++import { computed } from 'vue'
++const props=defineProps({id:{type:Number,default:0},name:{type:String,default:'研'},large:Boolean})
++const styleID=computed(()=>Number.isInteger(props.id)&&props.id>=0&&props.id<=7?props.id:0)
++</script>
++<template><span :class="['pc-avatar',`pc-avatar-${styleID}`,{'pc-avatar-large':large}]" aria-hidden="true">{{ Array.from(name || '研')[0].toUpperCase() }}</span></template>
+--- /dev/null
++++ b/web/src/components/account/Overview.vue
+@@ -0,0 +1,10 @@
++<script setup>
++import GoalRing from './charts/GoalRing.vue'
++import TrendChart from './charts/TrendChart.vue'
++import ModuleChart from './charts/ModuleChart.vue'
++import ActivityCalendar from './charts/ActivityCalendar.vue'
++defineProps({dashboard:Object,profile:Object})
++defineEmits(['goals'])
++const accuracy=v=>v==null?'暂无作答':`${v.toFixed(1)}%`
++</script>
++<template><div class="pc-overview"><section class="pc-card pc-today"><div class="pc-card-heading"><div><p class="eyebrow">今天的一步</p><h2>今日双目标</h2></div><button @click="$emit('goals')">设置目标</button></div><div class="pc-goals"><GoalRing label="作答目标" :value="dashboard.today.answered" :target="profile.daily_questions" unit="次"/><GoalRing label="记录时长" :value="dashboard.today.duration_ms/60000" :target="profile.daily_minutes" unit="分钟"/></div><details class="pc-table-details"><summary>查看今日目标数据表</summary><div class="pc-table-scroll"><table><caption>今日实际完成量与设置目标</caption><thead><tr><th>目标</th><th>实际</th><th>目标值</th><th>进度</th></tr></thead><tbody><tr><td>作答次数</td><td>{{ dashboard.today.answered }}</td><td>{{ profile.daily_questions }}</td><td>{{ Math.round(Math.min(100,dashboard.today.answered/profile.daily_questions*100)) }}%</td></tr><tr><td>记录分钟</td><td>{{ (dashboard.today.duration_ms/60000).toFixed(1) }}</td><td>{{ profile.daily_minutes }}</td><td>{{ Math.round(Math.min(100,dashboard.today.duration_ms/60000/profile.daily_minutes*100)) }}%</td></tr></tbody></table></div></details><div class="pc-today-footer"><p>已连续练习 <strong>{{ dashboard.streak.current }}</strong> 天 · 最长 {{ dashboard.streak.longest }} 天<span v-if="!dashboard.streak.practiced_today"> · 今天继续，走稳下一步</span></p><RouterLink class="button primary" to="/questions">开始今日练习</RouterLink></div></section><div class="pc-counts"><article class="pc-card"><span>期间作答次数</span><strong>{{ dashboard.period.answered.toLocaleString() }}</strong><small>较上期 {{ dashboard.period.answered-dashboard.previous.answered>=0?'+':'' }}{{ dashboard.period.answered-dashboard.previous.answered }} 次</small></article><article class="pc-card"><span>期间正确率</span><strong>{{ accuracy(dashboard.period.accuracy) }}</strong><small>答对 {{ dashboard.period.correct }} 次 / 作答 {{ dashboard.period.answered }} 次</small></article><article class="pc-card"><span>期间记录时长</span><strong>{{ (dashboard.period.duration_ms/60000).toFixed(1) }}<em> 分钟</em></strong><small>{{ dashboard.period.sessions }} 份已提交练习</small></article><article class="pc-card"><span>累计作答次数</span><strong>{{ dashboard.lifetime.answered.toLocaleString() }}</strong><small>累计 {{ dashboard.lifetime.sessions }} 份练习 · {{ accuracy(dashboard.lifetime.accuracy) }}</small></article></div><p class="pc-caption">{{ dashboard.start_date }} 至 {{ dashboard.end_date }}（{{ dashboard.timezone }}）。只计已提交练习中的非空作答；记录时长来自会话计时，不表示在线停留时间。</p><div class="pc-chart-pair"><TrendChart :items="dashboard.trend"/><ModuleChart :items="dashboard.modules"/></div><ActivityCalendar :items="dashboard.activity"/><section class="pc-card"><h2>每一步的记录</h2><p class="muted small">成就按本人真实作答计算；重复练习计为多次作答。</p><div class="pc-achievements"><article v-for="item in dashboard.achievements" :key="item.id" :class="['pc-achievement',{'pc-achievement-unlocked':item.unlocked}]"><span class="pc-achievement-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h10v7a5 5 0 0 1-10 0zM7 6H3v3a4 4 0 0 0 4 4M17 6h4v3a4 4 0 0 1-4 4M12 15v5M7 21h10"/></svg></span><div><h3>{{ item.name }}</h3><p>{{ item.unlocked?'已达成':'积累中' }} · {{ item.current }} / {{ item.target }}</p><progress :value="Math.min(item.current,item.target)" :max="item.target" :aria-label="`${item.name} ${item.current}/${item.target}`"/></div></article></div></section></div></template>
+--- /dev/null
++++ b/web/src/components/account/ProfileForm.vue
+@@ -0,0 +1,20 @@
++<script setup>
++import { computed,ref,watch } from 'vue'
++import { api } from '../../api'
++import Avatar from './Avatar.vue'
++const props=defineProps({profile:Object}),emit=defineEmits(['saved'])
++const fields=['nickname','bio','avatar_id','daily_questions','daily_minutes','exam_name','exam_date','default_limit','default_module','reading_size','revision']
++const editable=p=>Object.fromEntries(fields.map(key=>[key,p[key]]))
++const draft=ref(editable(props.profile)),baseline=ref(JSON.stringify(draft.value)),busy=ref(false),error=ref(''),notice=ref(''),conflict=ref(false),errors=ref({}),modules=ref([]),moduleError=ref(''),exportDays=ref('30'),exportBusy=ref(false),exportError=ref('')
++const dirty=computed(()=>JSON.stringify(draft.value)!==baseline.value)
++function reset(profile=props.profile){draft.value=editable(profile);baseline.value=JSON.stringify(draft.value);error.value='';errors.value={};conflict.value=false;notice.value=''}
++watch(()=>props.profile,p=>{if(!dirty.value&&JSON.stringify(editable(p))!==baseline.value)reset(p)})
++async function loadModules(){moduleError.value='';try{const filters=await api.filters();modules.value=filters.modules || []}catch(e){moduleError.value=e.message}}
++loadModules()
++function validate(){const e={};for(const [key,max] of [['nickname',40],['bio',200],['exam_name',40]])if(Array.from(draft.value[key]).length>max)e[key]=`最多 ${max} 个字符`;for(const [key,min,max] of [['daily_questions',5,200],['daily_minutes',5,180]])if(!Number.isInteger(draft.value[key])||draft.value[key]<min||draft.value[key]>max)e[key]=`请输入 ${min}–${max} 的整数`;if(draft.value.exam_date&&draft.value.exam_date!==props.profile.exam_date){const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const maxDate=new Date(today+'T00:00:00Z');maxDate.setUTCFullYear(maxDate.getUTCFullYear()+5);const maxDay=maxDate.toISOString().slice(0,10);if(draft.value.exam_date<=today||draft.value.exam_date>maxDay)e.exam_date='新设置的日期需为北京时间未来日期，最多五年后'}errors.value=e;return !Object.keys(e).length}
++async function save(){if(busy.value||conflict.value)return;error.value='';notice.value='';if(!validate()){error.value='请检查标出的资料字段';return};busy.value=true;try{const saved=await api.saveProfile(editable(draft.value));reset(saved);emit('saved',saved);notice.value=`资料与偏好已保存 · 版本 ${saved.revision}`}catch(e){error.value=e.status===409?'资料已在其他窗口更新。本页输入已保留，请先记录，再确认重新加载服务器资料。':e.message;conflict.value=e.status===409}finally{busy.value=false}}
++async function reload(){if(busy.value)return;if(!window.confirm('重新加载会放弃本页尚未保存的资料，请先记录本页输入。确定重新加载吗？'))return;busy.value=true;try{const p=await api.profile();reset(p);emit('saved',p)}catch(e){error.value=e.message}finally{busy.value=false}}
++async function download(){if(exportBusy.value)return;exportBusy.value=true;exportError.value='';try{const blob=await api.exportRecords(exportDays.value);const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='行测研习-个人作答记录.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){exportError.value=e.message}finally{exportBusy.value=false}}
++defineExpose({dirty,busy,reset})
++</script>
++<template><div><form class="pc-card pc-profile-form" @submit.prevent="save" novalidate><div class="pc-card-heading"><div><h2>资料与学习偏好</h2><p class="muted small">设置保存到你的学习账户，在其他设备登录也能恢复。</p></div><span class="pc-tag">{{ dirty?'尚未保存':'已同步' }} · 版本 {{ profile.revision }}</span></div><p v-if="error" class="notice err" role="alert">{{ error }}</p><div v-if="conflict" class="notice warn"><button type="button" :disabled="busy" @click="reload">重新加载服务器资料</button><p class="small">重新加载前会再次确认，当前输入不会自动覆盖服务器。</p></div><p v-if="notice" class="notice ok" role="status">{{ notice }}</p><fieldset :disabled="busy"><legend>个人资料</legend><div class="pc-form-grid"><label>用户名<input :value="profile.username" readonly autocomplete="username"/></label><label>昵称<input aria-label="昵称" v-model="draft.nickname" maxlength="80" :aria-invalid="!!errors.nickname" aria-describedby="pc-nickname-hint"/><small id="pc-nickname-hint">{{ errors.nickname || '最多 40 个字符' }}</small></label><label class="pc-span-two">简介<textarea aria-label="简介" v-model="draft.bio" rows="3" maxlength="400" :aria-invalid="!!errors.bio" aria-describedby="pc-bio-hint"/><small id="pc-bio-hint">{{ errors.bio || '最多 200 个字符' }}</small></label></div><p class="pc-field-label">头像样式</p><div class="pc-avatar-options" role="group" aria-label="头像样式"><button v-for="id in 8" :key="id" type="button" :aria-label="`头像样式 ${id-1}`" :aria-pressed="draft.avatar_id===id-1" :class="{'pc-avatar-chosen':draft.avatar_id===id-1}" @click="draft.avatar_id=id-1"><Avatar :id="id-1" :name="draft.nickname || profile.username"/><span>{{ id-1 }}</span></button></div></fieldset><fieldset :disabled="busy"><legend>今日目标与考试</legend><div class="pc-form-grid"><label>每日作答目标<input aria-label="每日作答目标" v-model.number="draft.daily_questions" type="number" min="5" max="200" step="1" :aria-invalid="!!errors.daily_questions" aria-describedby="pc-questions-hint"/><small id="pc-questions-hint">{{ errors.daily_questions || '5–200 次非空作答' }}</small></label><label>每日分钟目标<input aria-label="每日分钟目标" v-model.number="draft.daily_minutes" type="number" min="5" max="180" step="1" :aria-invalid="!!errors.daily_minutes" aria-describedby="pc-minutes-hint"/><small id="pc-minutes-hint">{{ errors.daily_minutes || '5–180 分钟记录时长' }}</small></label><label>考试名称<input aria-label="考试名称" v-model="draft.exam_name" maxlength="80" :aria-invalid="!!errors.exam_name"/><small>{{ errors.exam_name || '选填，最多 40 个字符' }}</small></label><label>考试日期<input aria-label="考试日期" v-model="draft.exam_date" type="date" :aria-invalid="!!errors.exam_date" aria-describedby="pc-date-hint"/><small id="pc-date-hint">{{ errors.exam_date || '选填；新日期需为未来且最多五年后。已到期日期可保持原值。' }}</small></label></div></fieldset><fieldset :disabled="busy"><legend>练习偏好</legend><p v-if="moduleError" class="notice err" role="alert">模块加载失败：{{ moduleError }} <button type="button" @click="loadModules">重试</button></p><div class="pc-form-grid"><label>默认题量<select aria-label="默认题量" v-model.number="draft.default_limit"><option :value="10">10 题</option><option :value="20">20 题</option><option :value="50">50 题</option></select></label><label>默认模块<select aria-label="默认模块" v-model="draft.default_module"><option value="">全部模块</option><option v-for="module in modules" :key="module" :value="module">{{ module }}</option><option v-if="draft.default_module&&!modules.includes(draft.default_module)" :value="draft.default_module">{{ draft.default_module }}</option></select><small>题库 URL 中的明确筛选条件优先。</small></label><label>练习正文字号<select aria-label="练习正文字号" v-model.number="draft.reading_size"><option :value="16">标准 · 16px</option><option :value="18">舒适 · 18px</option><option :value="20">大字 · 20px</option></select></label><p class="pc-reading-preview" :style="{fontSize:([16,18,20].includes(draft.reading_size)?draft.reading_size:16)+'px'}">阅读预览：先独立作答，再对照解析。</p></div></fieldset><div class="pc-form-actions"><button class="primary" type="submit" :disabled="busy||conflict">{{ busy?'正在保存…':'保存资料与偏好' }}</button><button type="button" :disabled="busy||!dirty" @click="reload">放弃修改并重载</button><span class="muted small">{{ profile.updated_at ? '最近更新：'+profile.updated_at.slice(0,10) : '' }}</span></div></form><section class="pc-card pc-export"><h2>导出个人作答记录</h2><p class="muted">只包含本人已提交的作答，不包含未提交草稿或题目解析。每次最多 5,000 条，超过时请缩小范围。</p><div class="pc-export-controls"><label>导出范围<select v-model="exportDays"><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option><option value="all">全部记录</option></select></label><button :disabled="exportBusy" @click="download">{{ exportBusy?'正在导出…':'下载 CSV' }}</button></div><p v-if="exportError" class="notice err" role="alert">{{ exportError }}</p></section></div></template>
+--- /dev/null
++++ b/web/src/components/account/Review.vue
+@@ -0,0 +1,10 @@
++<script setup>
++import { ref } from 'vue'
++import { useRouter } from 'vue-router'
++import { api } from '../../api'
++const props=defineProps({review:Object,profile:Object,days:Number})
++const router=useRouter(),busy=ref(''),error=ref('')
++const kindName={single:'专项练习',concept:'考点练习',wrongbook:'错题复练',paperset:'真题练习',favorite:'收藏练习'}
++async function start(kind,spec,key){if(busy.value)return;busy.value=key;error.value='';try{const s=kind==='priority'?await api.prioritizedWrongbook():await api.createSession(kind,spec);await router.push(`/practice?session=${s.session_id}`)}catch(e){error.value=e.message}finally{busy.value=''}}
++</script>
++<template><div class="pc-review"><p v-if="error" class="notice err" role="alert">{{ error }}</p><section class="pc-card"><div class="pc-card-heading"><h2>接着上次练</h2><RouterLink to="/records">全部学习记录</RouterLink></div><div class="pc-resume-list" v-if="review.unfinished.length"><article v-for="item in review.unfinished" :key="item.session_id"><div><h3>{{ kindName[item.kind] || '练习' }} · {{ item.total }} 题</h3><p class="muted small">已保存 {{ item.saved_answers }} 次作答 · {{ item.started_at.slice(0,10) }} 开始</p></div><RouterLink class="button" :to="`/practice?session=${item.session_id}`">继续练习</RouterLink></article></div><div v-else class="pc-empty"><p>没有未完成练习，从今天的一组题开始。</p><RouterLink class="button" to="/questions">前往题库</RouterLink></div></section><section class="pc-card pc-review-priority"><div><p class="eyebrow">先把错题练明白</p><h2>错题优先复练</h2><p>待订正 {{ review.wrong }} 题。按累计答错次数、最近答错时间选最多 20 题。</p><p class="muted small">手工订正状态与真实复练成绩分开记录。</p></div><button class="primary" :disabled="!!busy||!review.wrong_candidates.length" @click="start('priority',{},'priority')">{{ busy==='priority'?'正在组题…':review.wrong_candidates.length?'开始优先错题复练':'暂无待复练错题' }}</button><details v-if="review.wrong_candidates.length"><summary>本次优先题目（{{ review.wrong_candidates.length }}）</summary><ul><li v-for="item in review.wrong_candidates" :key="item.question_id">题 {{ item.question_id }} · {{ item.module || '未分类' }} · 累计答错 {{ item.wrong_count }} 次</li></ul></details><RouterLink to="/wrongbook">管理错题本</RouterLink></section><div class="pc-chart-pair"><section class="pc-card"><h2>模块补强建议</h2><p class="muted small">最近 {{ days }} 天至少 5 次作答的模块，按正确率由低到高。</p><article v-for="item in review.weak_modules" :key="item.module" class="pc-suggestion"><div><h3>{{ item.module }}</h3><p>{{ item.accuracy.toFixed(1) }}% · {{ item.answered }} 次作答</p></div><button :disabled="!!busy" @click="start('single',{module:item.module,limit:profile.default_limit},item.module)">练习此模块</button></article><p v-if="!review.weak_modules.length" class="pc-empty">样本还不足。每个模块至少完成 5 次作答后，才能给出补强建议。<RouterLink to="/questions">补充模块练习</RouterLink></p></section><section class="pc-card"><h2>考点补强建议</h2><p class="muted small">已有标注覆盖 {{ review.label_coverage==null?'暂无':review.label_coverage.toFixed(1)+'%' }}（{{ review.labeled_answered }} 次）。标注覆盖有限，不能代表完整能力诊断。</p><p v-if="review.unmapped_labeled_answered>0" class="notice warn">{{ review.unmapped_labeled_answered }} 次标注作答尚未形成可练习的稳定考点映射，先做模块练习。</p><article v-for="item in review.weak_concepts" :key="item.concept_id" class="pc-suggestion"><div><h3>{{ item.name }}</h3><p>{{ item.module }} · {{ item.accuracy.toFixed(1) }}% · {{ item.answered }} 次作答</p></div><button :disabled="!!busy" @click="start('concept',{concept_id:item.concept_id,limit:profile.default_limit},'concept'+item.concept_id)">复练此考点</button></article><p v-if="!review.weak_concepts.length" class="pc-empty">目前没有达到 5 次样本的有效考点建议。<RouterLink to="/concepts">查看已有考点地图</RouterLink></p></section></div><section class="pc-card pc-review-links"><div><h2>收藏与记录</h2><p class="muted">已收藏 {{ review.favorites }} 题，练习记录保留每次复盘。</p></div><RouterLink class="button" to="/favorites">查看我的收藏</RouterLink><RouterLink class="button" to="/records">查看学习记录</RouterLink></section></div></template>
+--- /dev/null
++++ b/web/src/components/account/Security.vue
+@@ -0,0 +1,20 @@
++<script setup>
++import { computed,onMounted,ref } from 'vue'
++import { useRouter } from 'vue-router'
++import { api } from '../../api'
++import { clearUser } from '../../auth'
++const emit=defineEmits(['logout'])
++const router=useRouter(),current=ref(''),password=ref(''),confirm=ref(''),error=ref(''),notice=ref(''),busy=ref(false),sessionsBusy=ref(false),sessionsError=ref(''),sessions=ref({items:[],page:1,total:0,size:20})
++const dirty=computed(()=>!!(current.value||password.value||confirm.value))
++const displayTime=v=>v?new Date(v).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'信息未知'
++function reset(){current.value='';password.value='';confirm.value=''}
++async function change(){if(busy.value)return;error.value='';if(password.value!==confirm.value){error.value='两次输入的新密码不一致';return};busy.value=true;try{await api.userPassword({current_password:current.value,password:password.value});reset();clearUser();await router.replace('/login')}catch(e){error.value=e.message}finally{busy.value=false}}
++async function rebuild(){if(busy.value)return;busy.value=true;error.value='';notice.value='';try{await api.rebuildStats();notice.value='考点练习统计已重新计算'}catch(e){error.value=e.message}finally{busy.value=false}}
++let requestSequence=0
++async function load(page=1){const seq=++requestSequence;sessionsBusy.value=true;sessionsError.value='';try{const result=await api.loginSessions(page);if(seq===requestSequence)sessions.value=result}catch(e){if(seq===requestSequence)sessionsError.value=e.message}finally{if(seq===requestSequence)sessionsBusy.value=false}}
++async function revoke(item){if(sessionsBusy.value||item.current)return;if(!window.confirm('撤销这份登录会话后，该设备需要重新登录。确定撤销吗？'))return;sessionsBusy.value=true;sessionsError.value='';try{await api.revokeSession(item.public_id);await load(Math.max(1,Math.min(sessions.value.page,Math.ceil((sessions.value.total-1)/20))))}catch(e){sessionsError.value=e.message}finally{sessionsBusy.value=false}}
++async function revokeOthers(){if(sessionsBusy.value)return;if(!window.confirm('确定退出其他所有登录会话吗？当前设备会保留登录。'))return;sessionsBusy.value=true;sessionsError.value='';try{const result=await api.revokeOtherSessions();notice.value=`已退出 ${result.revoked} 个其他会话，当前会话已保留`;await load()}catch(e){sessionsError.value=e.message}finally{sessionsBusy.value=false}}
++onMounted(()=>load())
++defineExpose({dirty,busy,reset})
++</script>
++<template><div class="pc-security"><div class="pc-chart-pair"><form class="pc-card pc-password-form" @submit.prevent="change"><h2>修改密码</h2><p class="muted">修改成功后会退出所有设备，请重新登录。</p><fieldset :disabled="busy"><label>当前密码<input v-model="current" required type="password" autocomplete="current-password"/></label><label>新密码<input v-model="password" required minlength="8" type="password" autocomplete="new-password"/></label><label>确认新密码<input v-model="confirm" required minlength="8" type="password" autocomplete="new-password"/></label><button class="primary" :disabled="busy">{{ busy?'正在处理…':'修改密码' }}</button></fieldset></form><section class="pc-card"><h2>学习统计</h2><p class="muted">考点标注更新后，可以根据历史作答重新计算考点掌握度。练习记录是统计依据。</p><button :disabled="busy" @click="rebuild">重新计算考点统计</button><p class="pc-security-note">退出当前设备使用账户退出入口。</p><button @click="emit('logout')">退出当前设备</button></section></div><p v-if="error" class="notice err" role="alert">{{ error }}</p><p v-if="notice" class="notice ok" role="status">{{ notice }}</p><section class="pc-card"><div class="pc-card-heading"><div><h2>活跃登录会话</h2><p class="muted small">设备类别仅供识别；来源地址已脱敏。时间为北京时间。</p></div><button :disabled="sessionsBusy" @click="revokeOthers">退出其他会话</button></div><p v-if="sessionsBusy" role="status">正在读取会话…</p><p v-if="sessionsError" class="notice err" role="alert">{{ sessionsError }} <button :disabled="sessionsBusy" @click="load(sessions.page)">重试</button></p><ul class="pc-session-list"><li v-for="item in sessions.items" :key="item.public_id"><div><h3>{{ item.device_label || '历史会话 / 信息未知' }} <span v-if="item.current" class="pc-tag">当前设备</span></h3><p>登录：{{ displayTime(item.created_at) }} · 过期：{{ displayTime(item.expires_at) }}</p><p class="muted small">来源：{{ item.ip_hint || '信息未知' }}</p></div><button v-if="!item.current" :disabled="sessionsBusy" @click="revoke(item)">撤销此会话</button><span v-else class="muted small">使用退出入口退出</span></li></ul><p v-if="!sessionsBusy&&!sessionsError&&!sessions.items.length">暂无活跃会话记录。</p><nav class="pc-session-pagination" aria-label="登录会话分页"><button :disabled="sessionsBusy||sessions.page<=1" @click="load(sessions.page-1)">上一页</button><span>第 {{ sessions.page }} 页 · {{ sessions.total }} 个会话</span><button :disabled="sessionsBusy||sessions.page*20>=sessions.total" @click="load(sessions.page+1)">下一页</button></nav></section></div></template>
+--- /dev/null
++++ b/web/src/components/account/account.css
+@@ -0,0 +1,10 @@
++.pc-topbar-link{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text);min-width:0}.pc-topbar-link>span:last-child{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc-avatar{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:12px;background:#e8eff9;color:#215eac;font-weight:700;font-size:19px;border:1px solid #cfddf0}.pc-avatar-large{width:76px;height:76px;border-radius:22px;font-size:34px}.pc-avatar-1{background:#e5f2ee;color:#14664c;border-color:#bbdbcf}.pc-avatar-2{background:#fff0d8;color:#82510a;border-color:#e8cf9e}.pc-avatar-3{background:#efe9f6;color:#664087;border-color:#d6c4e8}.pc-avatar-4{background:#e1f1f5;color:#206574;border-color:#b9dae2}.pc-avatar-5{background:#f7e8e7;color:#944d48;border-color:#e8c3c0}.pc-avatar-6{background:#e9eddf;color:#52662d;border-color:#ced8b5}.pc-avatar-7{background:#e8ebef;color:#485973;border-color:#c7cfda}
++.pc-account{max-width:1400px;margin:auto;min-width:0}.pc-account p{overflow-wrap:anywhere}.pc-heading{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:24px}.pc-identity{display:flex;align-items:center;gap:20px;min-width:0}.pc-identity>div{min-width:0}.pc-heading h1{font-family:'Songti SC','Noto Serif CJK SC',SimSun,serif;font-size:28px;line-height:1.5;overflow-wrap:anywhere}.pc-heading p{margin-bottom:4px}.pc-bio{font-size:13px}.pc-exam{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex:none;font-size:13px}.pc-exam strong{font-size:20px;color:var(--warn,#8b590d)}.pc-tabs{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line);margin-bottom:24px;gap:8px}.pc-tabs>button{border:0;border-radius:7px 7px 0 0;background:transparent;min-height:48px;position:relative;padding:10px 8px}.pc-tabs>button[aria-selected=true]{background:var(--panel);color:var(--accent);font-weight:650}.pc-tabs>button[aria-selected=true]:after{position:absolute;bottom:-1px;height:3px;content:'';background:var(--accent);left:12px;right:12px}.pc-range{display:flex;align-items:center;gap:16px;margin:0 0 20px;font-size:13px;flex-wrap:wrap}.pc-range>div{display:flex;gap:6px}.pc-range button{min-width:65px;padding:6px 12px}.pc-range button[aria-pressed=true]{background:var(--accent);color:white;border-color:var(--accent)}.pc-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;min-width:0;margin-bottom:20px}.pc-card-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}.pc-card-heading h2,.pc-card-heading p{margin-bottom:4px}.pc-card-heading>div{min-width:0}.pc-tag{background:var(--accent-soft,#e8eff9);color:var(--accent);padding:3px 8px;border-radius:5px;font-size:11px;white-space:nowrap}.pc-today{background:linear-gradient(105deg,#fff 65%,#f5f9ff);border-top:3px solid var(--accent)}.pc-goals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;padding:6px 0 24px}.pc-goal{display:flex;align-items:center;gap:22px;min-width:0}.pc-goal svg{width:116px;flex:none;max-width:32%}.pc-goal svg circle{fill:none;stroke-width:9}.pc-ring-track{stroke:#e8eef6}.pc-ring-value{stroke:var(--accent);transform:rotate(-90deg);transform-origin:60px 60px;stroke-linecap:round}.pc-goal:nth-child(2) .pc-ring-value{stroke:var(--ok,#167052)}.pc-goal svg text{fill:var(--text);font:700 24px var(--mono,monospace)}.pc-goal h3{margin-bottom:6px}.pc-goal p{margin-bottom:4px}.pc-goal-count{font-variant-numeric:tabular-nums;font-size:14px}.pc-goal-count strong{font:700 29px var(--mono,monospace)}.pc-today-footer{border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:18px}.pc-today-footer p{font-size:13px;margin:0}.pc-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.pc-counts .pc-card{padding:20px;margin:0}.pc-counts span,.pc-counts small{display:block;font-size:12px;color:var(--muted)}.pc-counts strong{display:block;font:600 28px/1.6 var(--mono,monospace);letter-spacing:-.05em;margin:5px 0;overflow-wrap:anywhere}.pc-counts strong em{font:normal 12px sans-serif;letter-spacing:0}.pc-caption{font-size:12px;color:var(--muted);margin:14px 0 20px}.pc-chart-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}.pc-chart{min-width:0}.pc-chart h2{margin-bottom:8px}.pc-chart-select{display:flex;align-items:center;justify-content:space-between;gap:16px}.pc-chart-select select{max-width:170px;margin:0}.pc-chart-unit{font-size:11px;color:var(--muted);margin:12px 0 4px}.pc-trend-plot svg{width:100%;height:auto;display:block;overflow:visible}.pc-trend-plot text{font:10px var(--mono,monospace);fill:var(--muted)}.pc-grid-line{stroke:#e7edf5;stroke-width:1}.pc-bar{fill:#80a7d9}.pc-bar-selected{fill:var(--accent)}.pc-line{stroke:var(--ok,#167052);stroke-width:2}.pc-point{fill:var(--ok,#167052)}.pc-chart-value{background:var(--panel-2,#f6f8fc);padding:10px 12px;font-size:12px;border-radius:6px;margin:14px 0;min-height:42px;font-variant-numeric:tabular-nums}.pc-table-details{border-top:1px solid var(--line);padding-top:12px;font-size:12px}.pc-table-details summary{cursor:pointer;color:var(--accent);min-height:30px}.pc-table-scroll{overflow:auto;max-height:280px}.pc-table-scroll table{border-collapse:collapse;white-space:nowrap;width:100%;font-size:12px}.pc-table-scroll th,.pc-table-scroll td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}.pc-table-scroll th{background:var(--panel-2);position:sticky;top:0}.pc-table-scroll caption{text-align:left;color:var(--muted);padding:12px 0}.pc-module-list{margin-top:20px}.pc-module-row{display:grid;grid-template-columns:1.4fr 1fr 48px;gap:12px;width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;text-align:left;padding:12px 0;background:transparent;min-height:64px}.pc-module-row[aria-pressed=true]{background:var(--panel-2)}.pc-module-label{font-size:12px;min-width:0}.pc-module-label small{display:block;font-size:10px;color:var(--muted);margin-top:3px}.pc-module-track{display:block;height:9px;background:#edf1f6;border-radius:3px;position:relative}.pc-module-track>span:not(.pc-no-sample){display:block;height:100%;background:#6c94ca;border-radius:3px}.pc-no-sample{position:absolute;top:-10px;left:45%;color:var(--muted)}.pc-module-row>strong{font:600 13px var(--mono,monospace);text-align:right}.pc-calendar-scroll{overflow-x:auto;padding:6px 4px 10px;max-width:100%}.pc-calendar-grid{display:grid;grid-template-rows:repeat(7,36px);grid-auto-columns:minmax(32px,1fr);grid-auto-flow:column;gap:7px;min-width:565px}.pc-day{border:1px solid transparent;min-height:0;padding:0;border-radius:4px;font:11px var(--mono,monospace)}.pc-day-0{background:#edf1f6;color:#5d6f86}.pc-day-1{background:#d5e6fa;color:#214e85}.pc-day-2{background:#9fc2ed;color:#163e70}.pc-day-3{background:#3c73b8;color:white}.pc-day-4{background:#215eac;color:white}.pc-day:hover{border-color:var(--accent);background:#e8eef8;color:var(--accent)}.pc-day-selected{outline:2px solid var(--text);outline-offset:1px}.pc-calendar-legend{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:12px;font-size:10px;color:var(--muted);margin:8px 0}.pc-calendar-legend>span{display:flex;gap:4px;align-items:center}.pc-calendar-legend i{width:12px;height:12px;display:inline-block;border-radius:2px}.pc-achievements{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.pc-achievement{display:flex;gap:12px;align-items:center;border:1px solid var(--line);padding:16px;border-radius:8px}.pc-achievement>div{min-width:0;flex:1}.pc-achievement h3{font-size:12px;margin:0 0 4px}.pc-achievement p{font-size:10px;color:var(--muted);margin-bottom:8px}.pc-achievement-mark{display:flex;color:var(--muted);background:var(--panel-2);border-radius:9px;padding:9px}.pc-achievement-mark svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.pc-achievement-unlocked{border-color:#c4dfd3}.pc-achievement-unlocked .pc-achievement-mark{color:var(--ok);background:#e5f2ee}.pc-achievement progress{height:6px;width:100%;accent-color:var(--accent);display:block}.pc-empty{padding:24px 0;color:var(--muted);font-size:13px}.pc-resume-list article,.pc-suggestion{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:16px 0;border-top:1px solid var(--line)}.pc-resume-list h3,.pc-suggestion h3{font-size:14px;margin-bottom:4px}.pc-resume-list p,.pc-suggestion p{font-size:12px;margin:0}.pc-suggestion>div{min-width:0}.pc-suggestion>button{flex:none;font-size:12px}.pc-review-priority{border-left:4px solid var(--warn,#8b590d)}.pc-review-priority details{font-size:12px;margin:16px 0}.pc-review-priority>a{display:block;font-size:13px;margin-top:16px}.pc-review-links{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.pc-review-links>div{flex:1}.pc-review-links p{font-size:13px;margin:0}.pc-profile-form fieldset,.pc-password-form fieldset{border:0;padding:0;margin:0 0 24px;min-width:0}.pc-profile-form legend{font-size:15px;font-weight:650;padding:16px 0;margin-bottom:12px;border-top:1px solid var(--line);width:100%;color:var(--text)}.pc-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.pc-span-two{grid-column:1/-1}.pc-profile-form textarea{width:100%;display:block;border:1px solid var(--line);border-radius:7px;resize:vertical;min-height:100px;padding:10px 12px;font:inherit;color:var(--text);background:var(--panel);margin-top:6px}.pc-profile-form label>small{display:block;margin-top:6px;color:var(--muted);font-size:11px}.pc-profile-form [aria-invalid=true]{border-color:#b73535}.pc-profile-form [aria-invalid=true]+small{color:#b73535}.pc-field-label{font-size:13px;color:var(--muted);margin:20px 0 10px}.pc-avatar-options{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:10px;max-width:650px}.pc-avatar-options button{padding:10px 4px;flex-direction:column;gap:4px;font-size:10px}.pc-avatar-options .pc-avatar-chosen{background:var(--accent-soft);border:2px solid var(--accent);padding:9px 3px}.pc-reading-preview{align-self:center;font-family:inherit;line-height:1.7;padding:14px;background:var(--panel-2);border-radius:8px;margin:0}.pc-form-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding-top:16px;border-top:1px solid var(--line)}.pc-export-controls{display:flex;align-items:flex-end;gap:16px;margin-bottom:16px}.pc-export-controls>label{min-width:170px}.pc-password-form label{margin-bottom:18px}.pc-security-note{font-size:12px;color:var(--muted);margin:28px 0 10px}.pc-session-list{list-style:none;padding:0;margin:0}.pc-session-list>li{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0;border-top:1px solid var(--line)}.pc-session-list h3{font-size:13px;margin-bottom:8px}.pc-session-list p{font-size:12px;margin-bottom:4px}.pc-session-pagination{display:flex;justify-content:flex-end;gap:12px;align-items:center;font-size:12px;margin-top:18px}.pc-reading .question-sheet .rich-text,.pc-reading .question-stem,.pc-reading .option .rich-text{font-size:var(--pc-reading-size,16px);line-height:1.8}
++@media(max-width:1100px){.pc-heading{align-items:flex-start}.pc-heading h1{font-size:24px}.pc-chart-pair{grid-template-columns:1fr}.pc-achievements{grid-template-columns:repeat(2,minmax(0,1fr))}.pc-counts{grid-template-columns:repeat(2,minmax(0,1fr))}.pc-exam{max-width:220px}.pc-goals{gap:20px}.pc-goal{gap:12px}}
++@media(max-width:600px){.pc-heading{display:block}.pc-identity{gap:12px;align-items:flex-start}.pc-heading h1{font-size:22px}.pc-avatar-large{width:54px;height:54px;font-size:25px;border-radius:16px}.pc-heading .eyebrow{font-size:10px}.pc-heading .muted{font-size:11px}.pc-exam{margin:16px 0 0;align-items:flex-start;max-width:none;padding-left:66px}.pc-exam strong{font-size:17px}.pc-tabs{gap:0;margin-bottom:18px}.pc-tabs>button{font-size:12px;padding:10px 2px}.pc-card{padding:18px 16px;border-radius:9px}.pc-card-heading{flex-wrap:wrap;gap:10px}.pc-card-heading button{font-size:12px}.pc-goals{grid-template-columns:1fr;gap:20px;padding-bottom:20px}.pc-goal svg{width:90px;max-width:36%}.pc-goal h3{font-size:14px}.pc-goal-count strong{font-size:26px}.pc-today-footer{align-items:flex-start;flex-direction:column}.pc-today-footer .button{width:100%}.pc-counts{gap:10px}.pc-counts .pc-card{padding:14px 12px}.pc-counts strong{font-size:23px}.pc-counts small{font-size:10px}.pc-range{gap:10px}.pc-range button{min-width:54px}.pc-chart-pair{gap:0}.pc-module-row{gap:8px;grid-template-columns:1.4fr 1fr 44px}.pc-achievements{grid-template-columns:1fr;gap:10px}.pc-calendar-grid{grid-template-rows:repeat(7,28px);grid-auto-columns:28px;min-width:448px;gap:6px}.pc-calendar-legend{justify-content:flex-start;gap:10px}.pc-form-grid{grid-template-columns:1fr;gap:16px}.pc-avatar-options{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.pc-form-actions{align-items:stretch;flex-direction:column}.pc-export-controls{flex-direction:column;align-items:stretch}.pc-session-list>li{flex-direction:column;align-items:flex-start}.pc-session-pagination{flex-wrap:wrap;justify-content:center;gap:8px}.pc-resume-list article,.pc-suggestion{align-items:flex-start;flex-direction:column}.pc-review-links{align-items:stretch;flex-direction:column}.pc-review-links>div{width:100%}.pc-topbar-link>span:last-child{max-width:100px}.pc-topbar-link{gap:6px}.pc-topbar-link .pc-avatar{width:30px;height:30px;font-size:15px;border-radius:8px}.pc-identity .pc-bio{font-size:11px}}
++@media(prefers-reduced-motion:reduce){.pc-account *{transition:none!important;animation:none!important}}
++
++.pc-calendar-scroll{display:flex;gap:8px}.pc-calendar-grid{flex:1}.pc-calendar-weekdays{display:grid;grid-template-rows:repeat(7,36px);gap:7px;flex:none;width:16px;text-align:center;color:var(--muted);font-size:11px;align-items:center}.pc-today .pc-table-details{margin-bottom:16px}
++@media(max-width:600px){.pc-calendar-weekdays{grid-template-rows:repeat(7,28px);gap:6px}.pc-calendar-grid{min-width:470px}}
++
++.pc-exam{min-width:0;overflow-wrap:anywhere}.pc-exam>span{max-width:100%;overflow-wrap:anywhere}.pc-account h3,.pc-module-label{overflow-wrap:anywhere}
+--- /dev/null
++++ b/web/src/components/account/charts/ActivityCalendar.vue
+@@ -0,0 +1,12 @@
++<script setup>
++import { ref,computed,watch } from 'vue'
++const props=defineProps({items:{type:Array,default:()=>[]}})
++const selected=ref(0),hovered=ref(null),root=ref(null)
++watch(()=>props.items,items=>{selected.value=Math.max(0,items.length-1);hovered.value=null},{immediate:true})
++const current=computed(()=>props.items[hovered.value??selected.value])
++const active=computed(()=>props.items.filter(v=>v.answered>0).length)
++const offset=computed(()=>props.items[0]?(new Date(props.items[0].date+'T00:00:00Z').getUTCDay()+6)%7:0)
++const level=v=>v===0?0:v<5?1:v<20?2:v<50?3:4
++function move(e){if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(e.key))return;e.preventDefault();hovered.value=null;const step={ArrowLeft:-7,ArrowRight:7,ArrowUp:-1,ArrowDown:1}[e.key];selected.value=e.key==='Home'?0:e.key==='End'?props.items.length-1:Math.max(0,Math.min(props.items.length-1,selected.value+step));root.value?.querySelectorAll('button')[selected.value]?.focus()}
++</script>
++<template><section class="pc-card pc-chart pc-calendar" data-chart="activity"><div class="pc-card-heading"><div><h2>90 日学习日历</h2><p class="muted small">{{ items[0]?.date }} 至 {{ items.at(-1)?.date }} · {{ active }} 个作答日</p></div><span class="pc-tag">北京时间</span></div><div class="pc-calendar-scroll"><div class="pc-calendar-weekdays" aria-hidden="true"><span v-for="day in ['一','二','三','四','五','六','日']" :key="day">{{ day }}</span></div><div class="pc-calendar-grid" ref="root" role="group" aria-label="学习日历，左右键跨七天，上下键选择相邻日期" @keydown="move"><span v-for="i in offset" :key="'padding'+i" aria-hidden="true"/><button v-for="(day,i) in items" :key="day.date" :class="['pc-day',`pc-day-${level(day.answered)}`,{'pc-day-selected':selected===i}]" :tabindex="selected===i?0:-1" :aria-label="`${day.date}，${day.answered} 次作答，${(day.duration_ms/60000).toFixed(1)} 分钟`" :aria-pressed="selected===i" @click="selected=i;hovered=null" @focus="selected=i;hovered=null" @mouseenter="hovered=i" @mouseleave="hovered=null"><span>{{ day.date.slice(8) }}</span></button></div></div><div class="pc-calendar-legend"><span>作答次数</span><span v-for="(name,i) in ['0','1–4','5–19','20–49','50+']" :key="i"><i :class="`pc-day-${i}`"/>{{ name }}</span></div><p class="pc-chart-value" v-if="current" role="status">{{ current.date }} · {{ current.answered }} 次作答 · {{ (current.duration_ms/60000).toFixed(1) }} 分钟 · {{ current.sessions }} 份已提交练习</p><details class="pc-table-details"><summary>查看活动日数据表</summary><div class="pc-table-scroll"><table><caption>最近 90 日作答活动</caption><thead><tr><th>日期</th><th>作答次数</th><th>分钟</th><th>练习数</th></tr></thead><tbody><tr v-for="day in items" :key="day.date"><td>{{ day.date }}</td><td>{{ day.answered }}</td><td>{{ (day.duration_ms/60000).toFixed(1) }}</td><td>{{ day.sessions }}</td></tr></tbody></table></div></details></section></template>
+--- /dev/null
++++ b/web/src/components/account/charts/GoalRing.vue
+@@ -0,0 +1,7 @@
++<script setup>
++import { computed } from 'vue'
++const props=defineProps({value:Number,target:Number,unit:String,label:String})
++const percent=computed(()=>Math.min(100,Math.max(0,props.value/props.target*100)))
++const remaining=computed(()=>Math.max(0,props.target-props.value))
++</script>
++<template><div class="pc-goal" data-chart="goal"><svg viewBox="0 0 120 120" role="img" tabindex="0" :aria-label="`${label}：${value.toFixed(unit==='分钟'?1:0)} / ${target} ${unit}，完成 ${Math.round(percent)}%`"><circle class="pc-ring-track" cx="60" cy="60" r="48"/><circle class="pc-ring-value" cx="60" cy="60" r="48" pathLength="100" :stroke-dasharray="`${percent} 100`"/><text x="60" y="62" text-anchor="middle">{{ Math.round(percent) }}%</text></svg><div><h3>{{ label }}</h3><p class="pc-goal-count"><strong>{{ value.toFixed(unit==='分钟'?1:0) }}</strong> / {{ target }} {{ unit }}</p><p class="muted small">{{ remaining>0 ? `还差 ${remaining.toFixed(unit==='分钟'?1:0)} ${unit}` : `已达标${value>target ? `，超额 ${(value-target).toFixed(unit==='分钟'?1:0)} ${unit}` : ''}` }}</p></div></div></template>
+--- /dev/null
++++ b/web/src/components/account/charts/ModuleChart.vue
+@@ -0,0 +1,8 @@
++<script setup>
++import { ref,computed } from 'vue'
++const props=defineProps({items:{type:Array,default:()=>[]}})
++const selected=ref('')
++const current=computed(()=>props.items.find(v=>v.module===selected.value))
++const accuracy=v=>v==null?'暂无作答':`${v.toFixed(1)}%`
++</script>
++<template><section class="pc-card pc-chart" data-chart="modules"><h2>六模块画像</h2><p class="muted small">所选期间正确率。少于 5 次作答，暂不足以判断掌握情况。</p><div class="pc-module-list"><button v-for="item in items" :key="item.module" class="pc-module-row" :aria-pressed="selected===item.module" @click="selected=item.module" @focus="selected=item.module" @mouseenter="selected=item.module"><span class="pc-module-label">{{ item.module }}<small>{{ item.answered }} 次 · {{ item.answered===0?'暂无样本':item.sufficient?'样本足够':'样本不足' }}</small></span><span class="pc-module-track"><span v-if="item.accuracy!=null" :style="{width:item.accuracy+'%'}"/><span v-else class="pc-no-sample">—</span></span><strong>{{ item.accuracy==null?'—':Math.round(item.accuracy)+'%' }}</strong></button></div><p class="pc-chart-value" role="status">{{ current ? `${current.module}：${current.correct} / ${current.answered} 次答对，${accuracy(current.accuracy)}${current.sufficient?'':'，样本不足'}` : '选择模块查看具体次数；空缺表示尚未作答。' }}</p><details class="pc-table-details"><summary>查看模块数据表</summary><div class="pc-table-scroll"><table><caption>模块正确率与样本量</caption><thead><tr><th>模块</th><th>作答</th><th>答对</th><th>正确率</th><th>样本</th></tr></thead><tbody><tr v-for="item in items" :key="item.module"><td>{{ item.module }}</td><td>{{ item.answered }}</td><td>{{ item.correct }}</td><td>{{ accuracy(item.accuracy) }}</td><td>{{ item.sufficient?'足够':'不足' }}</td></tr></tbody></table></div></details></section></template>
+--- /dev/null
++++ b/web/src/components/account/charts/TrendChart.vue
+@@ -0,0 +1,13 @@
++<script setup>
++import { computed,ref,watch } from 'vue'
++const props=defineProps({items:{type:Array,default:()=>[]}})
++const selected=ref(0)
++watch(()=>props.items,items=>{selected.value=Math.max(0,items.length-1)},{immediate:true})
++const current=computed(()=>props.items[selected.value])
++const max=computed(()=>Math.max(4,Math.ceil(Math.max(0,...props.items.map(v=>v.answered))/2)*2))
++const x=i=>36+(i+.5)*530/Math.max(1,props.items.length)
++const y=(v,limit)=>134-v/limit*104
++const accuracy=v=>v==null?'暂无作答':`${v.toFixed(1)}%`
++function move(e){if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();selected.value=e.key==='Home'?0:e.key==='End'?props.items.length-1:Math.max(0,Math.min(props.items.length-1,selected.value+(e.key==='ArrowRight'?1:-1)))}
++</script>
++<template><section class="pc-card pc-chart" data-chart="trend"><h2>作答趋势</h2><p class="muted small">每天提交的非空作答。次数与正确率分别使用独立坐标。</p><label class="pc-chart-select">查看日期<select v-model.number="selected"><option v-for="(day,i) in items" :key="day.date" :value="i">{{ day.date }}</option></select></label><div class="pc-trend-plot" tabindex="0" role="group" aria-label="每日作答趋势，左右键选择日期" @keydown="move"><p class="pc-chart-unit">作答次数（次）</p><svg viewBox="0 0 580 156" role="img" aria-label="每日作答次数柱状图"><template v-for="tick in [0,max/2,max]" :key="tick"><line x1="36" x2="570" :y1="y(tick,max)" :y2="y(tick,max)" class="pc-grid-line"/><text x="29" :y="y(tick,max)+4" text-anchor="end">{{ Math.round(tick) }}</text></template><g v-for="(day,i) in items" :key="day.date" @mouseenter="selected=i" @click="selected=i"><rect :x="x(i)-250/items.length" :y="y(day.answered,max)" :width="Math.max(2,500/items.length)" :height="Math.max(1,day.answered/max*104)" :class="['pc-bar',{'pc-bar-selected':i===selected}]"/><rect :x="x(i)-265/items.length" y="20" :width="530/items.length" height="116" fill="transparent"><title>{{ day.date }}：{{ day.answered }} 次</title></rect></g><text x="36" y="153">{{ items[0]?.date?.slice(5) }}</text><text x="568" y="153" text-anchor="end">{{ items.at(-1)?.date?.slice(5) }}</text></svg><p class="pc-chart-unit">正确率（%）· 无作答日留空</p><svg viewBox="0 0 580 156" role="img" aria-label="每日正确率点图，无作答日留空"><template v-for="tick in [0,50,100]" :key="tick"><line x1="36" x2="570" :y1="y(tick,100)" :y2="y(tick,100)" class="pc-grid-line"/><text x="29" :y="y(tick,100)+4" text-anchor="end">{{ tick }}</text></template><g v-for="(day,i) in items" :key="day.date" @mouseenter="selected=i" @click="selected=i"><line v-if="i>0&&day.accuracy!=null&&items[i-1].accuracy!=null" :x1="x(i-1)" :y1="y(items[i-1].accuracy,100)" :x2="x(i)" :y2="y(day.accuracy,100)" class="pc-line"/><circle v-if="day.accuracy!=null" :cx="x(i)" :cy="y(day.accuracy,100)" :r="i===selected?5:3" class="pc-point"/><rect :x="x(i)-265/items.length" y="20" :width="530/items.length" height="116" fill="transparent"><title>{{ day.date }}：{{ accuracy(day.accuracy) }}</title></rect></g><text x="36" y="153">{{ items[0]?.date?.slice(5) }}</text><text x="568" y="153" text-anchor="end">{{ items.at(-1)?.date?.slice(5) }}</text></svg></div><p v-if="current" class="pc-chart-value" role="status">{{ current.date }} · {{ current.answered }} 次作答 · {{ accuracy(current.accuracy) }} · {{ (current.duration_ms/60000).toFixed(1) }} 分钟</p><p v-if="!items.some(v=>v.answered)" class="muted">还没有期间作答，完成一份练习后会显示趋势。<RouterLink to="/questions">开始练习</RouterLink></p><details class="pc-table-details"><summary>查看趋势数据表</summary><div class="pc-table-scroll"><table><caption>每天的非空作答与会话记录时长</caption><thead><tr><th>日期</th><th>作答次数</th><th>正确率</th><th>分钟</th></tr></thead><tbody><tr v-for="day in items" :key="day.date"><td>{{ day.date }}</td><td>{{ day.answered }}</td><td>{{ accuracy(day.accuracy) }}</td><td>{{ (day.duration_ms/60000).toFixed(1) }}</td></tr></tbody></table></div></details></section></template>

@@ -1,0 +1,313 @@
+{
+  "date": "2026-10-06",
+  "status": "implemented and verified; independent focused review pending",
+  "commands": [
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./... -count=1",
+      "chunk_id": "d4b383",
+      "wall_time_seconds": 1.6601e-05,
+      "exit_code": 0,
+      "original_token_count": 126,
+      "output": "ok  \tai_analyze_guokao/cmd/gk\t0.448s\nok  \tai_analyze_guokao/internal/admin\t0.352s\nok  \tai_analyze_guokao/internal/distill\t3.213s\nok  \tai_analyze_guokao/internal/ingest\t10.256s\nok  \tai_analyze_guokao/internal/llm\t0.003s\nok  \tai_analyze_guokao/internal/media\t0.338s\n?   \tai_analyze_guokao/internal/model\t[no test files]\nok  \tai_analyze_guokao/internal/serve\t10.572s\nok  \tai_analyze_guokao/internal/setting\t0.045s\nok  \tai_analyze_guokao/internal/store\t0.774s\nok  \tai_analyze_guokao/internal/study\t0.434s\n"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./internal/serve -run 'TestPersonal(ExpectedIdentity|GuardedLogout)' -count=1 -v",
+      "chunk_id": "5a49fb",
+      "wall_time_seconds": 7.509e-06,
+      "exit_code": 0,
+      "original_token_count": 699,
+      "output": "=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/PUT/api/account/profile\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/profile\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/dashboard\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/export?days=all\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/sessions\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/password\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/sessions/revoke-others\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/DELETE/api/account/sessions/6d43546a776567b5256ea65b86b5397f\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/practice/stats/rebuild\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/review/wrongbook\n=== RUN   TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/logout\n--- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects (0.29s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/PUT/api/account/profile (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/profile (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/dashboard (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/export?days=all (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/GET/api/account/sessions (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/password (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/sessions/revoke-others (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/DELETE/api/account/sessions/6d43546a776567b5256ea65b86b5397f (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/practice/stats/rebuild (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/account/review/wrongbook (0.00s)\n    --- PASS: TestPersonalExpectedIdentityRejectsBeforeEffects/POST/api/auth/logout (0.00s)\n=== RUN   TestPersonalExpectedIdentityAuthenticationAndOrigin\n已生成配置加密密钥: /tmp/TestPersonalExpectedIdentityAuthenticationAndOrigin482815600/001/key（请备份；丢失后需重新填写 API key）\n--- PASS: TestPersonalExpectedIdentityAuthenticationAndOrigin (0.12s)\n=== RUN   TestPersonalGuardedLogoutDoesNotDeleteLaterCookie\n已生成配置加密密钥: /tmp/TestPersonalGuardedLogoutDoesNotDeleteLaterCookie1117628488/001/key（请备份；丢失后需重新填写 API key）\n--- PASS: TestPersonalGuardedLogoutDoesNotDeleteLaterCookie (0.23s)\nPASS\nok  \tai_analyze_guokao/internal/serve\t0.708s\n"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./internal/serve -run 'TestPersonal(ExpectedIdentity|GuardedLogout)' -count=1",
+      "chunk_id": "13c1c2",
+      "wall_time_seconds": 1.8642e-05,
+      "exit_code": 0,
+      "original_token_count": 12,
+      "output": "ok  \tai_analyze_guokao/internal/serve\t11.365s\n"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test -race ./internal/serve ./internal/study ./internal/store ./internal/setting -count=1",
+      "chunk_id": "feb78b",
+      "wall_time_seconds": 2.1325e-05,
+      "exit_code": 0,
+      "original_token_count": 46,
+      "output": "ok  \tai_analyze_guokao/internal/serve\t159.005s\nok  \tai_analyze_guokao/internal/study\t6.868s\nok  \tai_analyze_guokao/internal/store\t4.767s\nok  \tai_analyze_guokao/internal/setting\t2.134s\n",
+      "note": "R1 main implementation; before guarded logout extension, separately race-tested above."
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go vet ./...",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": "env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/final-fix-linux ./cmd/gk",
+      "exit_code": 0,
+      "output": "",
+      "note": "Compilation only; no Windows/macOS native execution"
+    },
+    {
+      "command": "env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/final-fix-windows.exe ./cmd/gk",
+      "exit_code": 0,
+      "output": "",
+      "note": "Compilation only; no Windows/macOS native execution"
+    },
+    {
+      "command": "env CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -trimpath -o test-artifacts/personal-center/_work/final-fix-darwin ./cmd/gk",
+      "exit_code": 0,
+      "output": "",
+      "note": "Compilation only; no Windows/macOS native execution"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --notified-only-logout",
+      "exit_code": 0,
+      "output": "{\n  \"requests\": [],\n  \"url_after_save\": \"http://127.0.0.1:18083/account\"\n}\n{\n  \"checks\": [\n    \"real other-tab logout notification preserves old A input: save/reload/CSV send no requests; late background401 cannot redirect known-stale page\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --cross-tab-account",
+      "exit_code": 0,
+      "output": "{\n  \"notified\": false,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791246809046988779_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:29Z\",\n    \"updated_at\": \"2026-10-06T00:33:29Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791246809046988779_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:29Z\",\n    \"updated_at\": \"2026-10-06T00:33:29Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": 409,\n  \"expected_owner\": \"92\",\n  \"a_owner\": 92,\n  \"local_refusal\": false\n}\n{\n  \"notified\": true,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791246809046988779_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:35Z\",\n    \"updated_at\": \"2026-10-06T00:33:35Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791246809046988779_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:33:35Z\",\n    \"updated_at\": \"2026-10-06T00:33:35Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": null,\n  \"expected_owner\": null,\n  \"a_owner\": 92,\n  \"local_refusal\": true\n}\n{\n  \"checks\": [\n    \"silent real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie\",\n    \"notified real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie\"\n  ],\n  \"console_errors\": [],\n  \"shared_cookie_cases\": [\n    {\n      \"notified\": false,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791246809046988779_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:29Z\",\n        \"updated_at\": \"2026-10-06T00:33:29Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791246809046988779_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:29Z\",\n        \"updated_at\": \"2026-10-06T00:33:29Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": 409,\n      \"expected_owner\": \"92\",\n      \"a_owner\": 92,\n      \"local_refusal\": false\n    },\n    {\n      \"notified\": true,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791246809046988779_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:35Z\",\n        \"updated_at\": \"2026-10-06T00:33:35Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791246809046988779_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:33:35Z\",\n        \"updated_at\": \"2026-10-06T00:33:35Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": null,\n      \"expected_owner\": null,\n      \"a_owner\": 92,\n      \"local_refusal\": true\n    }\n  ]\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-identity-conflict",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 409,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A account_changed 409 after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-password",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A password success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-revoke",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A revoke-others success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-current-logout",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A logout success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering",
+      "stage": "final known-stale frontend",
+      "result": "final-fix-final-ordering4-results.json",
+      "chunk_id": "ad2288",
+      "wall_time_seconds": 2.0497e-05,
+      "exit_code": 0,
+      "original_token_count": 132,
+      "output": "{\n  \"checks\": [\n    \"same-user old initial profile GET cannot revert successful PUT, form/topbar/preferences/revision; next PUT succeeds\",\n    \"same-user late dashboard profile keeps newest profile/goals and next PUT succeeds\",\n    \"auth.loadProfile late GET returns confirmed newer cache, preserves topbar/defaults and next PUT succeeds\",\n    \"older successful PUT ACK cannot lower newer same-user GET confirmation; pending dirty input protected, newest form/cache retained and next PUT succeeds\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "npm run build",
+      "workdir": "web",
+      "chunk_id": "dbc91e",
+      "wall_time_seconds": 7.697e-06,
+      "exit_code": 0,
+      "original_token_count": 1702,
+      "output": "✓ 60 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../cmd/gk/web_dist/.gitkeep                                           0.00 kB\n../cmd/gk/web_dist/index.html                                         0.43 kB │ gzip:  0.33 kB\n../cmd/gk/web_dist/assets/KaTeX_Size3-Regular-CTq5MqoE.woff           4.42 kB\n../cmd/gk/web_dist/assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2          4.93 kB\n../cmd/gk/web_dist/assets/KaTeX_Size2-Regular-Dy4dx90m.woff2          5.21 kB\n../cmd/gk/web_dist/assets/KaTeX_Size1-Regular-mCD8mA8B.woff2          5.47 kB\n../cmd/gk/web_dist/assets/KaTeX_Size4-Regular-BF-4gkZK.woff           5.98 kB\n../cmd/gk/web_dist/assets/KaTeX_Size2-Regular-oD1tc_U0.woff           6.19 kB\n../cmd/gk/web_dist/assets/KaTeX_Size1-Regular-C195tn64.woff           6.50 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2    6.91 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2       6.91 kB\n../cmd/gk/web_dist/assets/KaTeX_Size3-Regular-DgpXs0kz.ttf            7.59 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff     7.66 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff        7.72 kB\n../cmd/gk/web_dist/assets/KaTeX_Script-Regular-D3wIWfF6.woff2         9.64 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2     10.34 kB\n../cmd/gk/web_dist/assets/KaTeX_Size4-Regular-DWFBv043.ttf           10.36 kB\n../cmd/gk/web_dist/assets/KaTeX_Script-Regular-D5yQViql.woff         10.59 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2       11.32 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2          11.35 kB\n../cmd/gk/web_dist/assets/KaTeX_Size2-Regular-B7gKUWhC.ttf           11.51 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2      12.03 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2        12.22 kB\n../cmd/gk/web_dist/assets/KaTeX_Size1-Regular-Dbsnue_I.ttf           12.23 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff      12.32 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf     12.34 kB\n../cmd/gk/web_dist/assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf        12.37 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff        13.21 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Bold-BsDP51OF.woff           13.30 kB\n../cmd/gk/web_dist/assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2    13.57 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Italic-DN2j7dab.woff       14.11 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff         14.41 kB\n../cmd/gk/web_dist/assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff     16.03 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2       16.40 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-Italic-t53AETM-.woff2           16.44 kB\n../cmd/gk/web_dist/assets/KaTeX_Script-Regular-C5JkGWo-.ttf          16.65 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2       16.78 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Italic-NWA7e6Wa.woff2           16.99 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff        18.67 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-Italic-DA0__PXp.woff            18.75 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-BoldItalic-SpSLRI95.woff        19.41 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf       19.44 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Regular-CB_wures.ttf         19.57 kB\n../cmd/gk/web_dist/assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf            19.58 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Italic-BMLOBm91.woff            19.68 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf        22.36 kB\n../cmd/gk/web_dist/assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf          24.50 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Bold-Cx986IdX.woff2             25.32 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Regular-B22Nviop.woff2          26.27 kB\n../cmd/gk/web_dist/assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf      27.56 kB\n../cmd/gk/web_dist/assets/KaTeX_AMS-Regular-BQhdFMY1.woff2           28.08 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Bold-Jm3AIy58.woff              29.91 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Regular-Dr94JaBh.woff           30.77 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf         31.20 kB\n../cmd/gk/web_dist/assets/KaTeX_Math-Italic-flOr_0UB.ttf             31.31 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf         32.97 kB\n../cmd/gk/web_dist/assets/KaTeX_AMS-Regular-DMm9YOAa.woff            33.52 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Italic-3WenGoN9.ttf             33.58 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Bold-waoOVXN0.ttf               51.34 kB\n../cmd/gk/web_dist/assets/KaTeX_Main-Regular-ypZvNtVU.ttf            53.58 kB\n../cmd/gk/web_dist/assets/KaTeX_AMS-Regular-DRggAlZN.ttf             63.63 kB\n../cmd/gk/web_dist/assets/Admin-D-ntIYnR.css                          2.24 kB │ gzip:  0.75 kB\n../cmd/gk/web_dist/assets/index-Bv8RFqzr.css                         62.91 kB │ gzip: 16.28 kB\n../cmd/gk/web_dist/assets/_plugin-vue_export-helper-DlAUqK2U.js       0.09 kB │ gzip:  0.10 kB\n../cmd/gk/web_dist/assets/NotFound-bhgtJcSq.js                        0.57 kB │ gzip:  0.45 kB\n../cmd/gk/web_dist/assets/Pagination-CukRaQKA.js                      0.71 kB │ gzip:  0.47 kB\n../cmd/gk/web_dist/assets/QuestionRows-C2dctZmk.js                    1.19 kB │ gzip:  0.75 kB\n../cmd/gk/web_dist/assets/Filters-BWztiWnt.js                         1.44 kB │ gzip:  0.91 kB\n../cmd/gk/web_dist/assets/Papers-BMxuzR_t.js                          2.19 kB │ gzip:  1.31 kB\n../cmd/gk/web_dist/assets/Favorites-ck3rjsLE.js                       2.38 kB │ gzip:  1.36 kB\n../cmd/gk/web_dist/assets/ConceptList-DNNTP2A9.js                     3.01 kB │ gzip:  1.73 kB\n../cmd/gk/web_dist/assets/QuestionList-D4ba7iyH.js                    3.09 kB │ gzip:  1.72 kB\n../cmd/gk/web_dist/assets/WrongBook-uuCD7QrT.js                       3.15 kB │ gzip:  1.66 kB\n../cmd/gk/web_dist/assets/ConceptDetail-DSTRjpwr.js                   3.26 kB │ gzip:  1.80 kB\n../cmd/gk/web_dist/assets/Records-Blmaay5a.js                         3.34 kB │ gzip:  1.72 kB\n../cmd/gk/web_dist/assets/Login-BjMin_eP.js                           3.54 kB │ gzip:  1.93 kB\n../cmd/gk/web_dist/assets/Admin-DORyvEiS.js                           8.59 kB │ gzip:  3.50 kB\n../cmd/gk/web_dist/assets/Practice-BgM1GhL8.js                       13.04 kB │ gzip:  5.25 kB\n../cmd/gk/web_dist/assets/Account-B2c6nsoc.js                        45.11 kB │ gzip: 15.17 kB\n../cmd/gk/web_dist/assets/index-CySODehx.js                         108.01 kB │ gzip: 42.06 kB\n../cmd/gk/web_dist/assets/RichText-DTUKFGBI.js                      262.05 kB │ gzip: 78.09 kB\n✓ built in 1.44s\n"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go build -buildvcs=false -o test-artifacts/personal-center/_work/gk-task3 ./cmd/gk",
+      "exit_code": 0,
+      "output": "",
+      "stage": "final known-stale frontend embedded"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 make -o web release",
+      "exit_code": 0,
+      "output_summary": "Reuse final built frontend; compile static Linux and package19 files."
+    },
+    {
+      "command": "python3 test-artifacts/personal-center/task4-package-audit.py --final-fix",
+      "exit_code": 0,
+      "output_summary": "19 files; allowed members, no DB/key/backup/fixture, docs byte-identical, Linux ELF identity/frontend marker."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "output": ""
+    }
+  ],
+  "red_commands": [
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --cross-tab-account",
+      "exit_code": 1,
+      "evidence": "final-fix-cross-tab-red.json",
+      "note": "Initial minimal same-context equal-revision test; B nickname polluted and revision1"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./internal/serve -run TestPersonalExpectedIdentity -count=1 -v",
+      "exit_code": 1,
+      "output_summary": "PUT200 wrote old A input to B; profile/dashboard/CSV/sessions200 exposed B; password200 changed B and revoked its session. Subsequent operations401 are cascades, not independent red proofs."
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-identity-conflict",
+      "exit_code": 1,
+      "evidence": "final-fix-late-identity-red.json"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-password",
+      "exit_code": 1,
+      "evidence": "final-fix-late-password-red.json"
+    },
+    {
+      "command": "env GOCACHE=/tmp/gk-fixes-cache GOMAXPROCS=2 go test ./internal/serve -run TestPersonalGuardedLogout -count=1 -v",
+      "exit_code": 1,
+      "output_summary": "guarded logout could delete later Cookie: 200 [gk_user=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict]"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-current-logout",
+      "exit_code": 1,
+      "evidence": "final-fix-late-logout-red.json"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --notified-only-logout",
+      "exit_code": 1,
+      "evidence": "final-fix-known-logout-red.json",
+      "note": "Other-tab real logout notified old A; save still issued PUT401 and redirected, losing input."
+    }
+  ],
+  "harness_failures": [
+    {
+      "reason": "Synthetic username suffix exceeded32 characters",
+      "exit_code": 1
+    },
+    {
+      "reason": "100ms insufficient for real password HTTP; switched to condition polling",
+      "exit_code": 1
+    },
+    {
+      "reason": "3 parallel UI initial logins exceeded2 simultaneous password computations; reran serially",
+      "exit_code": 1
+    }
+  ],
+  "service": {
+    "current_session": null,
+    "addr": "127.0.0.1:18083",
+    "db": "test-artifacts/personal-center/_work/task3.sqlite",
+    "key_file": "test-artifacts/personal-center/_work/task3-synthetic.key",
+    "prior_sessions_closed_exit0": [
+      59278,
+      27520,
+      26563,
+      84388,
+      44597
+    ],
+    "closed": true,
+    "closed_sessions_exit0": [
+      59278,
+      27520,
+      26563,
+      84388,
+      44597,
+      26275,
+      20231,
+      94372
+    ],
+    "note": "Same final binary restarted between ordering and new7 to clear30/min test limiter; no state/fixture reset and no service remains.",
+    "closure_basis": "All owned exec sessions exited0 after Ctrl-C. Optional ss inventory was unavailable due sandbox netlink permission; no port-empty assertion derives from that command."
+  },
+  "ordinary45_binary": {
+    "snapshot": "test-artifacts/personal-center/_work/final-fix-stable45-gk",
+    "sha256": "74effc03878f8ac1a389bf18bfdd2554dac9543f6aae8ebbb32a2ce72d715e2d",
+    "scope": "stable identity/callback/guarded logout version; before only known-stale frontend early rejection and router401 branch"
+  },
+  "intermediate_directed_commands": [
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --cross-tab-account",
+      "exit_code": 0,
+      "output": "{\n  \"notified\": false,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791245738860467406_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:39Z\",\n    \"updated_at\": \"2026-10-06T00:15:39Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791245738860467406_s\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:39Z\",\n    \"updated_at\": \"2026-10-06T00:15:39Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": 409,\n  \"expected_owner\": \"73\",\n  \"a_owner\": 73\n}\n{\n  \"notified\": true,\n  \"a_revision\": 0,\n  \"b_before\": {\n    \"username\": \"personal_1791245738860467406_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:45Z\",\n    \"updated_at\": \"2026-10-06T00:15:45Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_after\": {\n    \"username\": \"personal_1791245738860467406_n\",\n    \"nickname\": \"\",\n    \"bio\": \"\",\n    \"avatar_id\": 0,\n    \"created_at\": \"2026-10-06T00:15:45Z\",\n    \"updated_at\": \"2026-10-06T00:15:45Z\",\n    \"daily_questions\": 20,\n    \"daily_minutes\": 30,\n    \"exam_name\": \"\",\n    \"exam_date\": \"\",\n    \"default_limit\": 20,\n    \"default_module\": \"\",\n    \"reading_size\": 16,\n    \"revision\": 0\n  },\n  \"b_polluted\": false,\n  \"put_status\": 409,\n  \"expected_owner\": \"73\",\n  \"a_owner\": 73\n}\n{\n  \"checks\": [\n    \"silent real same-context A/B equal revision: issuing A owner header/409, B unchanged, notice/input retained, stale logout/CSV refused with valid B Cookie\",\n    \"notified real same-context A/B equal revision: issuing A owner header/409, B unchanged, notice/input retained, stale logout/CSV refused with valid B Cookie\"\n  ],\n  \"console_errors\": [],\n  \"shared_cookie_cases\": [\n    {\n      \"notified\": false,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791245738860467406_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:39Z\",\n        \"updated_at\": \"2026-10-06T00:15:39Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791245738860467406_s\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:39Z\",\n        \"updated_at\": \"2026-10-06T00:15:39Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": 409,\n      \"expected_owner\": \"73\",\n      \"a_owner\": 73\n    },\n    {\n      \"notified\": true,\n      \"a_revision\": 0,\n      \"b_before\": {\n        \"username\": \"personal_1791245738860467406_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:45Z\",\n        \"updated_at\": \"2026-10-06T00:15:45Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_after\": {\n        \"username\": \"personal_1791245738860467406_n\",\n        \"nickname\": \"\",\n        \"bio\": \"\",\n        \"avatar_id\": 0,\n        \"created_at\": \"2026-10-06T00:15:45Z\",\n        \"updated_at\": \"2026-10-06T00:15:45Z\",\n        \"daily_questions\": 20,\n        \"daily_minutes\": 30,\n        \"exam_name\": \"\",\n        \"exam_date\": \"\",\n        \"default_limit\": 20,\n        \"default_module\": \"\",\n        \"reading_size\": 16,\n        \"revision\": 0\n      },\n      \"b_polluted\": false,\n      \"put_status\": 409,\n      \"expected_owner\": \"73\",\n      \"a_owner\": 73\n    }\n  ]\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-identity-conflict",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 409,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A account_changed 409 after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-password",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A password success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-security-revoke",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A revoke-others success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --late-current-logout",
+      "exit_code": 0,
+      "output": "{\n  \"held_status\": 200,\n  \"url_after_release\": \"http://127.0.0.1:18083/account\",\n  \"identity_alerts\": 0,\n  \"topbar\": \"BB已确认资料退出\",\n  \"session_followups\": [],\n  \"current_cookie_status\": 200\n}\n{\n  \"checks\": [\n    \"real delayed A logout success after B login cannot invalidate B identity/profile/preferences or redirect\"\n  ],\n  \"console_errors\": []\n}\n"
+    }
+  ],
+  "original45": {
+    "date": "2026-10-06",
+    "status": "original45 passed; final known-stale branch targeted verification pending",
+    "commands": [
+      {
+        "command": "python3 test-artifacts/ui_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+        "exit_code": 0,
+        "checks": 18,
+        "pageerrors": [],
+        "result": "final-fix-old18-results.json"
+      },
+      {
+        "command": "python3 test-artifacts/round2_fixes_ui.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+        "exit_code": 0,
+        "checks": 6,
+        "pageerrors": [],
+        "result": "final-fix-old6-results.json"
+      },
+      {
+        "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+        "exit_code": 0,
+        "checks": 17,
+        "pageerrors": [],
+        "result": "final-fix-personal17-results.json"
+      },
+      {
+        "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering",
+        "exit_code": 0,
+        "checks": 4,
+        "pageerrors": [],
+        "result": "final-fix-ordering4-results.json"
+      }
+    ],
+    "checks": 45,
+    "evidence_boundary": "45 verified on stable identity guard / callback / guarded logout version; subsequent only ProfileForm known-stale early rejection and router known-stale401 branch will be verified by final targeted cases + ordering. No changes to ordinary paths."
+  },
+  "evidence_boundary": "Original45 verified on stable main identity/callback/guarded logout version; only subsequent known-stale ProfileForm early refusal and router401 preservation tested on final binary with7 new cases plus ordering4. No claim all45 reran after this narrow branch change.",
+  "unique_ui_groups": 52,
+  "final_ui_groups": 11,
+  "compiled_artifacts": {
+    "gk-task3": {
+      "sha256": "ef1d63dc849a0f890fff9a39b5c961ef885b8ec14caf7725333f8abfcff7531d",
+      "type": "local Go test service with final embedded frontend"
+    },
+    "final-fix-linux": {
+      "sha256": "63360979b38b898e9542beb1fcc8975f557f9148dadec8d6c59d80803e4d019c",
+      "type": "ELF"
+    },
+    "final-fix-windows.exe": {
+      "sha256": "081dc6309df146a7f5511e160783ee0724850f5adf11c6232beee5fc87e4f8e5",
+      "type": "PE32+"
+    },
+    "final-fix-darwin": {
+      "sha256": "e4d91c57a05ffc0c61d47977fbb01f19af9c2ae95829798b19c90eed2633ff04",
+      "type": "Mach-O"
+    }
+  },
+  "package": {
+    "archive": "var/gk-linux-amd64.tar.gz",
+    "size": 12109319,
+    "sha256": "5ee21b47fd71cc25206e4918e3d51d690aea35a87fa120ec64975cd32d9b2b4b",
+    "file_count": 19,
+    "checks": {
+      "allowed_members_only": true,
+      "no_database_key_backup_or_fixture": true,
+      "documents_match_workspace": true,
+      "linux_elf_with_personal_frontend": true
+    },
+    "matches_final_linux_compilation": true
+  }
+}

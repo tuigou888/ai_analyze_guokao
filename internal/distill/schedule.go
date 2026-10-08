@@ -2,6 +2,7 @@ package distill
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -40,18 +41,24 @@ func (b *Bucket) Label() string {
 
 // bucketOwners 记录桶到执行器的归属，并保证并发读写安全。
 type bucketOwners struct {
-	mu   sync.Mutex
-	path string
-	m    map[string]string
+	mu      sync.Mutex
+	path    string
+	m       map[string]string
+	loadErr error
 }
 
 func loadBucketOwners(path string) *bucketOwners {
 	o := &bucketOwners{path: path, m: map[string]string{}}
 	b, err := os.ReadFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			o.loadErr = err
+		}
 		return o
 	}
-	_ = json.Unmarshal(b, &o.m)
+	if err := json.Unmarshal(b, &o.m); err != nil || o.m == nil {
+		o.loadErr = fmt.Errorf("桶归属文件损坏: %s", path)
+	}
 	return o
 }
 
@@ -65,20 +72,20 @@ func (o *bucketOwners) owner(key string) (string, bool) {
 
 // claim 记录归属并立即落盘。**必须立即落盘**：进程被杀时内存里的归属会丢，
 // 续跑就失去了粘滞保证，而"没落盘的归属"等于没归属。
-func (o *bucketOwners) claim(key, engine string) {
+func (o *bucketOwners) claim(key, engine string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.m[key] = engine
 	b, err := json.MarshalIndent(o.m, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
 	// 先写临时文件再改名，避免读到写了一半的内容
 	tmp := o.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return
+		return err
 	}
-	_ = os.Rename(tmp, o.path)
+	return os.Rename(tmp, o.path)
 }
 
 // buildWorkPlan 把桶分给各执行器：

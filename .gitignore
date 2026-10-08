@@ -1,0 +1,25 @@
+# 运行时产物：数据库、批次结果、日志，全部可由 data/ 重新生成
+/var/
+
+# 数据集是独立 git 仓库（816MB，远端 ERRRC/xingcezhenti），不进主仓库。
+# 首次使用时单独拉取到 data/，或作为 submodule 引入。
+/data/
+
+# Go
+*.test
+*.out
+
+# Python worker
+__pycache__/
+*.pyc
+
+# 前端
+web/node_modules/
+
+# go:embed 的目录：内容由 npm run build 生成，不入库；
+# 目录本身必须存在，否则 //go:embed 编译失败
+/cmd/gk/web_dist/*
+!/cmd/gk/web_dist/.gitkeep
+
+# Personal-center task snapshots and temporary review intermediates
+/test-artifacts/personal-center/_work/

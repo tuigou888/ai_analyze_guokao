@@ -1,0 +1,91 @@
+{
+  "checks": [
+    "silent real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie",
+    "notified real same-context A/B equal revision: silent PUT owner/409 or notified local refusal, B unchanged, notice/input retained, known-stale logout/CSV refused with valid B Cookie"
+  ],
+  "console_errors": [],
+  "shared_cookie_cases": [
+    {
+      "notified": false,
+      "a_revision": 0,
+      "b_before": {
+        "username": "personal_1791246809046988779_s",
+        "nickname": "",
+        "bio": "",
+        "avatar_id": 0,
+        "created_at": "2026-10-06T00:33:29Z",
+        "updated_at": "2026-10-06T00:33:29Z",
+        "daily_questions": 20,
+        "daily_minutes": 30,
+        "exam_name": "",
+        "exam_date": "",
+        "default_limit": 20,
+        "default_module": "",
+        "reading_size": 16,
+        "revision": 0
+      },
+      "b_after": {
+        "username": "personal_1791246809046988779_s",
+        "nickname": "",
+        "bio": "",
+        "avatar_id": 0,
+        "created_at": "2026-10-06T00:33:29Z",
+        "updated_at": "2026-10-06T00:33:29Z",
+        "daily_questions": 20,
+        "daily_minutes": 30,
+        "exam_name": "",
+        "exam_date": "",
+        "default_limit": 20,
+        "default_module": "",
+        "reading_size": 16,
+        "revision": 0
+      },
+      "b_polluted": false,
+      "put_status": 409,
+      "expected_owner": "92",
+      "a_owner": 92,
+      "local_refusal": false
+    },
+    {
+      "notified": true,
+      "a_revision": 0,
+      "b_before": {
+        "username": "personal_1791246809046988779_n",
+        "nickname": "",
+        "bio": "",
+        "avatar_id": 0,
+        "created_at": "2026-10-06T00:33:35Z",
+        "updated_at": "2026-10-06T00:33:35Z",
+        "daily_questions": 20,
+        "daily_minutes": 30,
+        "exam_name": "",
+        "exam_date": "",
+        "default_limit": 20,
+        "default_module": "",
+        "reading_size": 16,
+        "revision": 0
+      },
+      "b_after": {
+        "username": "personal_1791246809046988779_n",
+        "nickname": "",
+        "bio": "",
+        "avatar_id": 0,
+        "created_at": "2026-10-06T00:33:35Z",
+        "updated_at": "2026-10-06T00:33:35Z",
+        "daily_questions": 20,
+        "daily_minutes": 30,
+        "exam_name": "",
+        "exam_date": "",
+        "default_limit": 20,
+        "default_module": "",
+        "reading_size": 16,
+        "revision": 0
+      },
+      "b_polluted": false,
+      "put_status": null,
+      "expected_owner": null,
+      "a_owner": 92,
+      "local_refusal": true
+    }
+  ]
+}

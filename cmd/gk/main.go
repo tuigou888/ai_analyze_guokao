@@ -58,7 +58,9 @@ func usage() {
 
 用法:
   gk ingest [选项]    解析 data/ 下的 Markdown 真题并入库
-  gk backup --out 文件  生成一致性数据库快照（不覆盖已有文件）
+  gk backup --bundle 目录  生成并校验数据库与有效密钥的完整备份（不覆盖）
+  gk backup --verify-bundle 目录  只读验证完整备份的校验值与解密
+  gk backup --out 文件  仅生成一致性数据库快照（图片、密钥另行备份）
   gk stats  [选项]    输出统计与解析契约校验
   gk media  <子命令>  图片索引 / 公式图 OCR / 解析回填（P2）
   gk serve  [选项]    启动 HTTP 服务与管理入口
@@ -70,7 +72,7 @@ func usage() {
 ingest 选项:
   --data string     数据目录 (默认 "data")
   --db string       数据库路径 (默认 "var/db/gk.sqlite")
-  --reset           入库前删除已有数据库
+  --reset           新目标路径建库（拒绝覆盖已有数据库）
   --workers int     解析并发数 (默认 CPU 核数)
 
 stats 选项:
@@ -83,20 +85,24 @@ func cmdIngest(args []string) error {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
 	dataDir := fs.String("data", "data", "数据目录")
 	dbFile := fs.String("db", "var/db/gk.sqlite", "数据库路径")
-	reset := fs.Bool("reset", false, "入库前删除已有数据库")
+	reset := fs.Bool("reset", false, "新目标路径建库，拒绝覆盖已有数据库")
 	workers := fs.Int("workers", runtime.NumCPU(), "解析并发数")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	if *workers < 1 {
+		return fmt.Errorf("--workers 必须大于 0")
+	}
 	if *reset {
-		// WAL 模式会留下 -wal / -shm 附属文件，一并清掉，否则旧数据会复活。
+		// 不自动替换现有库：其中包含无法由题库重建的用户记录，且可能有在线连接。
 		for _, suffix := range []string{"", "-wal", "-shm"} {
-			if err := os.Remove(*dbFile + suffix); err != nil && !os.IsNotExist(err) {
+			if _, err := os.Lstat(*dbFile + suffix); err == nil {
+				return fmt.Errorf("拒绝覆盖已有数据库或附属文件 %s；请使用新的 --db 路径建库", *dbFile+suffix)
+			} else if !os.IsNotExist(err) {
 				return err
 			}
 		}
-		fmt.Printf("已重置数据库 %s\n", *dbFile)
 	}
 	if err := os.MkdirAll(filepath.Dir(*dbFile), 0o755); err != nil {
 		return err
@@ -116,11 +122,6 @@ func cmdIngest(args []string) error {
 		return err
 	}
 	defer db.Close()
-
-	// 入库阶段关掉 fsync：这是可重建的派生数据，崩溃后 --reset 重跑即可。
-	if _, err := db.Exec(`PRAGMA synchronous = OFF`); err != nil {
-		return err
-	}
 
 	ing, err := store.NewIngester(db, fmt.Sprintf("data=%s files=%d", *dataDir, len(files)))
 	if err != nil {
@@ -188,7 +189,7 @@ func cmdIngest(args []string) error {
 	fmt.Printf("\n完成：%d 篇 / 题块 %d / 新增题目实体 %d / 解析告警 %d，耗时 %s\n",
 		done, nOccurrences, nQuestions, nWarnings, elapsed.Round(time.Second))
 	if failed > 0 {
-		fmt.Printf("有 %d 篇解析失败，见上方错误输出\n", failed)
+		return fmt.Errorf("有 %d 篇解析失败，导入未完整完成；已完成文件可保留并重跑", failed)
 	}
 	fmt.Println("\n下一步: gk stats")
 	return nil

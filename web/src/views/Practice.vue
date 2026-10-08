@@ -1,34 +1,74 @@
 <script setup>
 import { computed,onMounted,onBeforeUnmount,ref } from 'vue'
-import { useRoute,useRouter,onBeforeRouteLeave } from 'vue-router'
+import { useRoute,useRouter,onBeforeRouteLeave,onBeforeRouteUpdate } from 'vue-router'
 import { api } from '../api'
 import { auth } from '../auth'
 import RichText from '../components/RichText.vue'
-const route=useRoute(),router=useRouter(),session=ref(null),index=ref(0),answers=ref({}),durations=ref({}),busy=ref(true),submitting=ref(false),error=ref(''),saveState=ref(''),favorite=ref(''),warning=ref(false),elapsed=ref(0)
-let at=Date.now(),saveTimer,clock,saveChain=Promise.resolve(),alive=true
+const route=useRoute(),router=useRouter(),session=ref(null),index=ref(0),answers=ref({}),durations=ref({}),busy=ref(true),submitting=ref(false),error=ref(''),saveState=ref(''),favorite=ref(''),warning=ref(false),elapsed=ref(0),conflict=ref(false)
+let at=Date.now(),saveTimer,clock,saveChain=Promise.resolve(),alive=true,editGeneration=0,savedGeneration=0,pendingSaves=0,saveFailed=false
 const question=computed(()=>session.value?.questions?.[index.value]),done=computed(()=>!!session.value?.submitted_at)
 const count=computed(()=>Object.values(answers.value).filter(Boolean).length)
 const result=computed(()=>session.value?.results?.find(r=>r.question_id===question.value?.id))
 const label=computed(()=>question.value?.label)
 const progress=computed(()=>session.value ? Math.round(count.value/session.value.total*100) : 0)
-function track(){if(question.value&&!done.value){const id=question.value.id;durations.value[id]=(durations.value[id]||0)+(Date.now()-at)}at=Date.now()}
+const readingSize=computed(()=>[16,18,20].includes(auth.profile?.reading_size) ? auth.profile.reading_size : 16)
+function track(){if(question.value&&!done.value){const id=question.value.id;durations.value[id]=(durations.value[id]||0)+(Date.now()-at);editGeneration++}at=Date.now()}
 function payload(){return session.value.question_ids.map(id=>({question_id:id,answer:answers.value[id]||'',duration_ms:Math.round(durations.value[id]||0)}))}
-async function flush(){clearTimeout(saveTimer);if(!session.value||done.value)return;track();const data=payload();saveState.value='正在保存…';saveChain=saveChain.catch(()=>{}).then(()=>api.draft(session.value.session_id,data));try{await saveChain;if(alive)saveState.value='作答已保存'}catch(e){if(alive){saveState.value='保存失败';error.value='作答保存失败：'+e.message};throw e}}
-function schedule(){saveState.value='等待保存…';clearTimeout(saveTimer);saveTimer=setTimeout(()=>flush().catch(()=>{}),700)}
-function choose(option){if(done.value||submitting.value)return;const q=question.value,old=answers.value[q.id]||'';if(q.answer_type==='multi'){answers.value[q.id]=old.includes(option)?old.replace(option,''):[...old,option].sort().join('')}else{answers.value[q.id]=option}warning.value=false;schedule()}
-function go(i){track();index.value=i;favorite.value='';schedule()}
-async function submit(force=false){if(count.value<session.value.total&&!force){warning.value=true;return}submitting.value=true;error.value='';try{await flush();session.value=await api.submit(session.value.session_id,payload());elapsed.value=Math.floor(session.value.duration_ms/1000);warning.value=false;saveState.value='练习已提交'}catch(e){error.value=e.message}finally{submitting.value=false}}
+function showConflict(e){if(e.status===409){conflict.value=true;saveState.value='保存冲突：本页作答尚未保存';error.value='其他窗口已更新这份练习。本页选择已保留，请先记录本页答案，再加载已保存草稿。'}}
+function updateSaveState() {
+  if(done.value) saveState.value='练习已提交'
+  else if(conflict.value) saveState.value='保存冲突：本页作答尚未保存'
+  else if(pendingSaves) saveState.value='正在保存…'
+  else if(saveFailed) saveState.value='保存失败'
+  else saveState.value=savedGeneration===editGeneration?'作答已保存':'等待保存…'
+}
+async function flush() {
+  clearTimeout(saveTimer)
+  if(!session.value||done.value) return
+  if(conflict.value) throw new Error('请先处理草稿冲突')
+  track()
+  const data=payload(),generation=editGeneration
+  pendingSaves++
+  updateSaveState()
+  const pending=saveChain.catch(()=>{}).then(async()=>{
+    if(conflict.value) throw new Error('请先处理草稿冲突')
+    const saved=await api.draft(session.value.session_id,data,session.value.draft_revision)
+    session.value.draft_revision=saved.draft_revision
+    savedGeneration=generation
+    saveFailed=false
+    if(error.value.startsWith('作答保存失败：')) error.value=''
+  })
+  saveChain=pending
+  try { await pending }
+  catch(e) {
+    saveFailed=true
+    if(alive){error.value='作答保存失败：'+e.message;showConflict(e)}
+    throw e
+  } finally {
+    pendingSaves--
+    if(alive) updateSaveState()
+  }
+}
+
+async function reloadDraft(){if(!window.confirm('加载服务器草稿会替换本页选择，请先记录尚未保存的答案。确定加载吗？'))return;clearTimeout(saveTimer);submitting.value=true;try{await saveChain.catch(()=>{});const latest=await api.session(session.value.session_id);session.value=latest;answers.value={};durations.value={};for(const a of latest.answers||[]){answers.value[a.question_id]=a.answer;durations.value[a.question_id]=a.duration_ms||0};conflict.value=false;editGeneration=0;savedGeneration=0;saveFailed=false;error.value='';saveState.value=done.value?'练习已提交':'作答已保存';elapsed.value=Math.floor((done.value?latest.duration_ms:Object.values(durations.value).reduce((a,b)=>a+b,0))/1000);at=Date.now();warning.value=false}catch(e){error.value=e.message;showConflict(e)}finally{submitting.value=false}}
+
+function schedule(){if(conflict.value||submitting.value)return;saveFailed=false;updateSaveState();clearTimeout(saveTimer);saveTimer=setTimeout(()=>flush().catch(()=>{}),700)}
+function choose(option){if(done.value||submitting.value)return;const q=question.value,old=answers.value[q.id]||'';if(q.answer_type==='multi'){answers.value[q.id]=old.includes(option)?old.replace(option,''):[...old,option].sort().join('')}else{answers.value[q.id]=option}editGeneration++;warning.value=false;schedule()}
+function go(i){if(submitting.value)return;track();index.value=i;favorite.value='';schedule()}
+async function submit(force=false){if(submitting.value||done.value)return;if(conflict.value){error.value='请先处理草稿冲突';return}if(count.value<session.value.total&&!force){warning.value=true;return}submitting.value=true;error.value='';try{await flush();session.value=await api.submit(session.value.session_id,payload(),session.value.draft_revision);elapsed.value=Math.floor(session.value.duration_ms/1000);warning.value=false;saveState.value='练习已提交'}catch(e){error.value=e.message;showConflict(e)}finally{submitting.value=false}}
 async function collect(){try{await api.wrongAction(question.value.id,'favorite');favorite.value='已加入错题与收藏'}catch(e){error.value=e.message}}
 async function again(){busy.value=true;try{const s=await api.createSession(session.value.kind,session.value.spec);await router.replace(`/practice?session=${s.session_id}`)}catch(e){error.value=e.message;busy.value=false}}
 function correct(option){return done.value&&result.value?.correct_answer?.includes(option)}
 function selected(option){return (answers.value[question.value?.id]||'').includes(option)}
-function beforeUnload(e){if(!done.value&&saveState.value!=='作答已保存'&&count.value){e.preventDefault();e.returnValue=''}}
+function beforeUnload(e){if(!done.value&&(savedGeneration!==editGeneration||pendingSaves||conflict.value||saveFailed)){e.preventDefault();e.returnValue=''}}
 onMounted(async()=>{try{const id=Number(route.query.session);if(!id){await router.replace('/questions');return};session.value=await api.session(id);for(const a of session.value.answers||[]){answers.value[a.question_id]=a.answer;durations.value[a.question_id]=a.duration_ms||0};saveState.value=done.value?'练习已提交':'作答已保存';elapsed.value=Math.floor((done.value?session.value.duration_ms:Object.values(durations.value).reduce((a,b)=>a+b,0))/1000);at=Date.now();clock=setInterval(()=>{if(!done.value)elapsed.value++},1000);window.addEventListener('beforeunload',beforeUnload)}catch(e){error.value=e.message}finally{busy.value=false}})
-onBeforeRouteLeave(async()=>{if(session.value&&!done.value&&auth.user){try{await flush()}catch{return window.confirm('作答尚未保存，确定离开吗？')}}})
-defineExpose({savePending:flush})
+async function guardNavigation(){if(submitting.value)return false;if(session.value&&!done.value&&auth.user){try{await flush()}catch{return window.confirm('作答尚未保存，确定离开吗？')}}}
+onBeforeRouteLeave(guardNavigation)
+onBeforeRouteUpdate(guardNavigation)
+defineExpose({savePending:async()=>{if(submitting.value)throw new Error('正在提交或加载练习，请完成后再退出');await flush()}})
 onBeforeUnmount(()=>{alive=false;clearTimeout(saveTimer);clearInterval(clock);window.removeEventListener('beforeunload',beforeUnload)})
 </script>
-<template><p v-if="busy" class="empty" role="status">正在准备练习…</p><p v-if="error" class="notice err" role="alert">{{ error }}</p><div v-if="session&&!busy" class="practice-layout">
+<template><p v-if="busy" class="empty" role="status">正在准备练习…</p><p v-if="error" class="notice err" role="alert">{{ error }}</p><div v-if="conflict" class="notice warn" role="alert"><p>本页作答尚未保存，自动保存和交卷已暂停。请记录当前选择，再加载服务器草稿。</p><button :disabled="submitting" @click="reloadDraft">加载已保存草稿</button></div><div v-if="session&&!busy" class="practice-layout pc-reading" :style="{'--pc-reading-size':readingSize+'px'}">
 <section class="practice-main"><div class="practice-header"><div><p class="eyebrow">{{ done ? '练习复盘' : session.kind==='paperset' ? '真题作答' : '专注练习' }}</p><h1>{{ question.module }} <span class="muted">/ {{ index+1 }} <small>共 {{ session.total }} 题</small></span></h1></div><span class="tag">{{ {single:'单选题',multi:'多选题 · 可选多项',judge:'判断题',other:'暂无答案'}[question.answer_type] }}</span></div>
 <div v-if="done" class="score-banner"><strong>{{ session.correct }} <small>/ {{ session.total }}</small></strong><div><h2>本次正确率 {{ Math.round(session.correct/session.total*100) }}%</h2><p>共作答 {{ count }} 题 · 错题已自动收录 · 点击题号查看复盘</p></div></div>
 <article class="question-sheet"><details v-if="question.material_body" class="material" open><summary>阅读材料</summary><RichText :text="question.material_body" /><details v-if="question.material_with_text!==question.material_body"><summary>查看文字识别版本</summary><RichText :text="question.material_with_text" /></details></details>
@@ -37,6 +77,6 @@ onBeforeUnmount(()=>{alive=false;clearTimeout(saveTimer);clearInterval(clock);wi
 <p v-if="done&&!result?.user_answer" class="notice warn">这道题未作答，解析尚未解锁。可重新练习后查看。</p><div v-if="done&&result?.user_answer" class="analysis"><p :class="['result-status',result.is_correct?'ok':'err']">{{ result.is_correct ? '回答正确' : '回答错误' }} · 你的答案 {{ result.user_answer }} · 正确答案 {{ question.answer }}</p><h2>官方解析</h2><RichText :text="question.explanation_with_formula" />
 <details v-if="label?.reasoning_chain" class="label-analysis"><summary>考点归纳与解题方法</summary><p class="row-meta"><span class="tag">{{ label.tertiary }}</span><span>现有标注 · 请结合官方解析判断</span></p><template v-for="[key,title] in [['detail','考点细节'],['question_model','问法模型'],['reasoning_chain','推理链'],['fastest_solution','最快解法'],['pitfalls','易错点'],['template','母题抽象'],['key_features','题干关键特征'],['boundary','适用边界'],['confusable','易混考点'],['typical_ask','典型提问'],['doubt','疑点']]" :key="key"><div v-if="label[key]?.length" class="analysis-field"><h3>{{ title }}</h3><template v-if="Array.isArray(label[key])"><ul><li v-for="(v,i) in label[key]" :key="i"><RichText :text="typeof v==='string'?v:`${v['考点']}：${v['区分信号']}`" /></li></ul></template><RichText v-else :text="label[key]" /></div></template><p class="muted small">标注来源：{{ label.model }} · {{ label.run_id }}</p></details></div>
 <details v-if="question.sources?.length" class="sources"><summary>真题来源（{{ question.sources.length }}）</summary><p v-for="p in question.sources" :key="p.paper_id">{{ p.name }} · {{ p.module }}</p></details>
-</article><div class="practice-actions"><button :disabled="index===0" @click="go(index-1)">上一题</button><button @click="collect">收藏此题</button><span class="muted" role="status">{{ favorite }}</span><button class="primary" v-if="index<session.total-1" @click="go(index+1)">下一题</button><button class="primary" v-else-if="!done" :disabled="submitting" @click="submit()">{{ submitting ? '判分中…' : '提交练习' }}</button><button class="primary" v-else @click="again">再练一次</button></div></section>
-<aside class="practice-aside"><section class="panel answer-card"><div class="panel-heading"><h2>答题卡</h2><span class="mono">{{ String(Math.floor(elapsed/60)).padStart(2,'0') }}:{{ String(elapsed%60).padStart(2,'0') }}</span></div><p class="muted">已作答 {{ count }} / {{ session.total }}</p><div class="progress" :aria-label="`已完成 ${progress}%`"><span :style="{width:progress+'%'}" /></div><div class="question-index"><button v-for="(id,i) in session.question_ids" :key="id" :aria-label="`第 ${i+1} 题${answers[id] ? '，已作答' : '，未作答'}`" :aria-current="i===index ? 'step' : undefined" :class="{active:i===index,answered:answers[id],wrong:done&&session.results?.find(r=>r.question_id===id)?.is_correct===false}" @click="go(i)">{{ i+1 }}</button></div><p class="small muted" role="status">{{ saveState }}</p><button v-if="!done" class="primary wide" :disabled="submitting" @click="submit()">{{ submitting ? '正在判分…' : '提交练习' }}</button><div v-if="warning" class="notice warn" role="alert"><p>还有 {{ session.total-count }} 题未作答。未作答题计为错误，解析保持未解锁。</p><button :disabled="submitting" @click="submit(true)">仍然交卷</button><button @click="warning=false">继续作答</button></div><RouterLink v-if="done" class="subtle-link" to="/records">查看学习记录</RouterLink></section><p class="desk-note">先给自己一个答案，<br>再和解析一起复盘。</p></aside>
+</article><div class="practice-actions"><button :disabled="index===0||submitting" @click="go(index-1)">上一题</button><button @click="collect">收藏此题</button><span class="muted" role="status">{{ favorite }}</span><button class="primary" v-if="index<session.total-1" :disabled="submitting" @click="go(index+1)">下一题</button><button class="primary" v-else-if="!done" :disabled="submitting||conflict" @click="submit()">{{ submitting ? '判分中…' : '提交练习' }}</button><button class="primary" v-else @click="again">再练一次</button></div></section>
+<aside class="practice-aside"><section class="panel answer-card"><div class="panel-heading"><h2>答题卡</h2><span class="mono">{{ String(Math.floor(elapsed/60)).padStart(2,'0') }}:{{ String(elapsed%60).padStart(2,'0') }}</span></div><p class="muted">已作答 {{ count }} / {{ session.total }}</p><div class="progress" :aria-label="`已完成 ${progress}%`"><span :style="{width:progress+'%'}" /></div><div class="question-index"><button v-for="(id,i) in session.question_ids" :key="id" :disabled="submitting" :aria-label="`第 ${i+1} 题${answers[id] ? '，已作答' : '，未作答'}`" :aria-current="i===index ? 'step' : undefined" :class="{active:i===index,answered:answers[id],wrong:done&&session.results?.find(r=>r.question_id===id)?.is_correct===false}" @click="go(i)">{{ i+1 }}</button></div><p class="small muted" role="status">{{ saveState }}</p><button v-if="!done" class="primary wide" :disabled="submitting||conflict" @click="submit()">{{ submitting ? '正在判分…' : '提交练习' }}</button><div v-if="warning" class="notice warn" role="alert"><p>还有 {{ session.total-count }} 题未作答。未作答题计为错误，解析保持未解锁。</p><button :disabled="submitting||conflict" @click="submit(true)">仍然交卷</button><button @click="warning=false">继续作答</button></div><RouterLink v-if="done" class="subtle-link" to="/records">查看学习记录</RouterLink></section><p class="desk-note">先给自己一个答案，<br>再和解析一起复盘。</p></aside>
 </div><div v-else-if="!busy" class="empty"><RouterLink to="/questions">返回题库，开始一份练习</RouterLink></div></template>

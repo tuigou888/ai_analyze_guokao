@@ -1,0 +1,12 @@
+# Linux / Python 3.12; install Paddle from its official CPU wheel index.
+paddlepaddle==3.3.1
+paddleocr==3.7.0
+paddlex[ocr-core]==3.7.2
+numpy==1.26.4
+Pillow==12.3.0
+# Security patch levels confirmed by pip-audit and upstream advisories.
+anyio==4.14.2
+protobuf==6.33.5
+# PP-FormulaNet_plus-M tokenizer and Unicode cleanup (not in ocr-core extra).
+tokenizers==0.23.2
+ftfy==6.3.1

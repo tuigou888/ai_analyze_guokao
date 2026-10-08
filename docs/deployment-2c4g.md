@@ -51,21 +51,21 @@ git clone https://github.com/ERRRC/xingcezhenti.git data
 完整数据集约 816 MB，拉取与建库需要网络和足够磁盘空间。首次建库执行：
 
 ```bash
+make web
 make reingest
 make admin-init
-make web
 make build
 ```
 
-这四条命令依次创建 SQLite 数据库、创建管理员、构建前端并将其嵌入 Go 程序。然后启动服务：
+这四条命令依次构建前端、创建 SQLite 数据库、创建管理员并重新编译 Go 程序；源码中的 `.gitkeep` 也允许独立编译后端 CLI，网站交付仍必须先构建前端。然后启动服务：
 
 ```bash
-./var/gk serve --db var/db/gk.sqlite --data data --addr 127.0.0.1:8080
+./var/gk serve --db var/db/gk.sqlite --data data --addr 127.0.0.1:8081
 ```
 
-打开用户入口 <http://127.0.0.1:8080/login>，首次注册普通用户。管理员入口是 <http://127.0.0.1:8080/admin/login>。`make admin-init` 和 `gk admin create` 会在终端交互输入口令，不要把密码写在命令参数里。
+打开用户入口 <http://127.0.0.1:8081/login>，首次注册普通用户。管理员入口是 <http://127.0.0.1:8081/admin/login>。`make admin-init` 和 `gk admin create` 会在终端交互输入口令，不要把密码写在命令参数里。
 
-> **请谨慎使用 `make reingest`。** 它带 `--reset`，会删除并重新创建数据库，现有管理员、用户、练习、错题、P3 标注和数据库设置都会丢失。已有库只需备份后启动新程序，无需重建。
+> `make reingest` 带 `--reset`，现在拒绝覆盖已有数据库及 WAL/SHM。重新建题库请指定新路径，例如 `make reingest DB=var/db/gk-new.sqlite`；新题库不含原账户、练习、错题或标注，不能直接替换线上库。程序升级应备份后启动新程序，无需重建。
 
 从未经 OCR 的原始数据首次建库时，题目、选项和答案可用；`explanation_with_formula` 等 OCR 回填字段不会凭空生成。若本机已有完成 P2 的数据库，使用下文的快照步骤迁移数据库以保留 OCR 结果。
 
@@ -87,9 +87,11 @@ npm ci
 npm run dev
 ```
 
-在浏览器打开 <http://127.0.0.1:5173>。Vite 把 `/api` 请求转发到本地 Go 服务 `127.0.0.1:8080`；前端源码保存在 `web/src/`。需要验证嵌入式生产产物时运行 `make web`，再运行 `make build`，并直接访问 Go 服务的 8080 端口。
+在浏览器打开 <http://127.0.0.1:5173>。Vite 把 `/api` 请求转发到本地 Go 服务 `127.0.0.1:8081`；前端源码保存在 `web/src/`。需要验证嵌入式生产产物时运行 `make web`，再运行 `make build`，并直接访问 Go 服务的 8081 端口。
 
 后端默认绑定回环地址，仅供本机访问。局域网设备不需要访问时，保持 `127.0.0.1`，不要改成 `0.0.0.0`。
+
+本地端口为 8081，生产 systemd/Nginx 配置端口为 8080，请勿混用。
 
 ## 5. 生成部署文件与数据库快照
 
@@ -109,10 +111,12 @@ var/gk-linux-amd64.tar.gz
 
 ### 5.1 使用已有题库（推荐）
 
-先生成新文件名的 SQLite 一致性快照：
+在原开发机使用本机程序生成并验证完整备份（Linux/macOS 本机编译，不运行 Linux 发布二进制）：
 
 ```bash
-./var/release/gk backup --db var/db/gk.sqlite --out var/deploy-gk.sqlite
+go build -buildvcs=false -o var/gk ./cmd/gk
+./var/gk backup --db var/db/gk.sqlite --bundle var/deploy-backup
+./var/gk backup --verify-bundle var/deploy-backup
 ```
 
 在 Windows PowerShell 中如需从本机数据库制作快照，可构建 Windows 可执行文件：
@@ -123,10 +127,11 @@ npm ci
 npm run build
 cd ..
 go build -buildvcs=false -o var/gk.exe ./cmd/gk
-.\var\gk.exe backup --db var/db/gk.sqlite --out var/deploy-gk.sqlite
+.\var\gk.exe backup --db var/db/gk.sqlite --bundle var/deploy-backup
+.\var\gk.exe backup --verify-bundle var/deploy-backup
 ```
 
-如果只用 Windows 迁移已有数据库，则将 `var/db/gk.sqlite`、`var/secret.key` 与 `data/90-图片/` 一起放在原开发机的项目目录，通过 Windows OpenSSH 的 `scp` 或 WinSCP 传到服务器；也可以在 Windows 上先安装支持的 `tar`，按 Linux 章节的路径打包图片。
+Windows 使用生成后的 `var/deploy-backup/gk.sqlite`、`secret.key` 和 `complete.json`，通过 Windows OpenSSH 的 `scp` 或 WinSCP 私下传输；不要直接复制仍在使用的数据库。macOS 使用本机编译的程序；Windows 路线本轮仅完成交叉编译校验，原生运行仍需在 Windows 验收。Windows 上请另用 NTFS 权限限制备份目录访问，POSIX 的 0600 不是 Windows ACL。
 
 快照保留数据库里的用户、管理员、题目、P3 标注、设置和 OCR 回填内容，也包含 SQLite WAL 中已提交的数据。它以 0600 权限新建目标文件，不允许覆盖已存在的文件。在线库不要用文件管理器直接复制 `.sqlite` 代替快照；SQLite 对 `VACUUM INTO` 的说明见[官方文档](https://www.sqlite.org/lang_vacuum.html)。
 
@@ -138,7 +143,7 @@ tar -czf var/gk-images.tar.gz -C data 90-图片
 
 最终图片目录应为 `data/90-图片/题目图/` 和 `data/90-图片/公式图/`。网站部署只需图片目录，无需把几百 MB 的 Markdown 源笔记上传服务器。
 
-复制 `var/secret.key`。这个文件与数据库中的加密设置成对，**必须使用创建现有数据库密钥时对应的原文件或环境变量**。若原环境用 `GK_SECRET_KEY` 覆盖文件，迁移时必须在服务环境中沿用相同的值，否则原 API Key 密文无法解开。
+使用完整备份里的 `var/deploy-backup/secret.key`，它是与快照匹配的有效密钥。`GK_SECRET_KEY` 模式会导出规范化的有效密钥，无需将原口令复制进命令行或聊天；备份进程必须收到原有效环境变量。缺失/错误密钥会中止并清理本次目录。图片与批次文件仍需另行备份。
 
 不要把 `var/secret.key` 放进 Git、`var/gk-linux-amd64.tar.gz`、Web 根目录或聊天记录。通过 SSH/SCP 私下传输。
 
@@ -148,9 +153,9 @@ tar -czf var/gk-images.tar.gz -C data 90-图片
 
 ```bash
 scp var/gk-linux-amd64.tar.gz ubuntu@SERVER_IP:/tmp/
-scp var/deploy-gk.sqlite ubuntu@SERVER_IP:/tmp/
+scp var/deploy-backup/gk.sqlite ubuntu@SERVER_IP:/tmp/deploy-gk.sqlite
 scp var/gk-images.tar.gz ubuntu@SERVER_IP:/tmp/
-scp var/secret.key ubuntu@SERVER_IP:/tmp/gk-secret.key
+scp var/deploy-backup/secret.key ubuntu@SERVER_IP:/tmp/gk-secret.key
 ```
 
 将 `SERVER_IP` 替换为轻量服务器公网 IP。用户名以腾讯云实例连接页为准，Ubuntu 镜像通常使用 `ubuntu`。Windows 可用 Windows OpenSSH 的 `scp` 或 WinSCP；SSH 非 22 端口使用 `scp -P 端口` 和 `ssh -p 端口`。
@@ -242,7 +247,7 @@ sudo install -o gk -g gk -m 600 /tmp/deploy-gk.sqlite /opt/gk/var/db/gk.sqlite
 sudo install -o gk -g gk -m 600 /tmp/gk-secret.key /opt/gk/var/secret.key
 ```
 
-首次正式部署应从包含题库内容的快照开始。若线上数据库已存在，先用线上一致性备份，并把经过验证的数据库文件安装到该位置；不要上传空数据库覆盖线上数据。首次启动会自动执行 v7 数据库迁移、创建中文搜索索引并刷新已有考点映射，这一步可能比以后启动慢。
+首次正式部署应从包含题库内容的快照开始。若线上数据库已存在，先用线上一致性备份，并把经过验证的数据库文件安装到该位置；不要上传空数据库覆盖线上数据。首次启动会自动执行到 v12 的追加数据库迁移、创建中文搜索索引并刷新已有考点映射，这一步可能比以后启动慢。
 
 ### 8.2 确认管理员账号
 
@@ -313,11 +318,15 @@ sudo journalctl -u gk -n 100 --no-pager
 
 宝塔文档中的反向代理流程见[官方配置指南](https://docs.bt.cn/user-guide/site/php/site-config/reverse-proxy/)。保存后确认 Nginx 配置通过面板语法检查，并从服务器访问 Go 健康端点。
 
-**确认 Nginx 传递 HTTPS 来源头。** Go 服务只在 HTTP 请求带 `X-Forwarded-Proto: https` 时给登录 Cookie 加 `Secure` 标记。打开站点或反代的 Nginx 配置，在代理的 `location /` 配置块中确认有以下指令：
+**确认 Nginx 传递来源信息。** 登录 Cookie 始终带 Secure。完整同源校验只接受可信代理的 HTTPS 来源头；也可用 `--public-origin https://你的域名` 固定外部 Origin。打开代理的 `location /` 配置块确认以下指令：
 
 ```nginx
 proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header Host $http_host;
 ```
+
+Go 的 `--trusted-proxies` 默认不信任任何转发头。提供的 systemd 服务仅信任本机回环代理；不要配置公网宽泛网段。Nginx 应覆盖客户端传入的 X-Forwarded-For（如上），不能直接透传。Go 同时按来源地址和用户名限制认证请求。
 
 若宝塔自动生成的反代配置已经包含这条，不要重复添加；若未包含，把它添加到已经存在的 `/` 代理配置块中，而不是另建一个相同的 `location /`。保存后使用宝塔的“配置修改/保存”按钮并确认 Nginx 重载成功。也可以用 HTTPS 登录后查看响应头，确认 `Set-Cookie` 含 `Secure`。
 
@@ -346,7 +355,7 @@ proxy_set_header X-Forwarded-Proto $scheme;
 
 ### 12.1 启用每日 SQLite 快照
 
-项目的 `gk backup` 命令使用 SQLite 一致性快照，目标文件必须不存在。备份任务保存在 `var/backups/UTC时间/`，包含数据库和密钥文件。要在宝塔后台手工触发，也可以进入终端运行部署服务：
+项目的 `gk backup --bundle` 命令使用 SQLite 一致性快照，目标目录必须不存在。备份任务保存在 `var/backups/UTC时间/`，包含 `gk.sqlite`、实际生效的 `secret.key` 和 `complete.json`。只有快照完整性、密钥解密和校验值完成后才报告成功；没有完成标记的目录禁止恢复。`--out` 只生成数据库快照，不是完整恢复备份。要在宝塔后台手工触发，也可以进入终端运行部署服务：
 
 ```bash
 sudo cp /opt/gk/deploy/gk-backup.service /etc/systemd/system/
@@ -357,19 +366,39 @@ sudo systemctl start gk-backup.service
 sudo systemctl list-timers gk-backup.timer
 ```
 
-这些操作需要通过 SSH 执行；宝塔面板的“计划任务”也可配置每日运行 `/opt/gk/deploy/backup.sh`，任务用户选 `gk`。不要同时启动两个相同时间的任务。脚本不自动删除旧快照；定期将关键备份传到另一台机器，并按自己需要的保留周期清理。磁盘写满会导致数据库无法写入。
+这些操作需要通过 SSH 执行；宝塔面板的“计划任务”也可配置每日运行 `/bin/sh /opt/gk/deploy/backup.sh`，任务用户选 `gk`。不要同时启动两个相同时间的任务。脚本不自动删除旧快照；定期将关键备份传到另一台机器，并按自己需要的保留周期清理。磁盘写满会导致数据库无法写入。
+
+若使用 `GK_SECRET_KEY`，Go 网站与 systemd 备份服务均读取私有 `/opt/gk/var/gk.env`（`gk:gk`、0600），在其中配置同一密钥；不要写进公开服务模板。新增模板仅声明可选 EnvironmentFile，不会自行创建或改动现有密钥。宝塔任务不会自动读取 systemd 环境，请使用 `sudo systemctl start gk-backup.service` 调度同一个备份服务，或由受限任务环境提供有效密钥。存在旧文件但未传入实际环境密钥时，解密校验会失败；不要把它视为完整成功。
 
 图片首次迁移后可单独备份；只在图片库发生更新时重新打包。若开始蒸馏，另外备份 `var/runs/<批次名>/`，尤其是 `bucket_owner.json`。
 
 ### 12.2 恢复
 
+先在异机或隔离环境运行 `./gk backup --verify-bundle 备份目录`，确认校验值、数据库完整性和密钥解密通过；不要在原备份上迁移或启动服务，应复制到新的恢复路径。恢复环境若设置了 `GK_SECRET_KEY`，必须删除该覆盖或改为与备份密钥相同的值，否则仍会覆盖文件密钥。
+
 停掉网站，保留当前数据库、`-wal` 和 `-shm` 文件作为回滚副本，然后安装已确认的 `gk.sqlite` 和对应的 `secret.key`，最后启动 `gk` 并检查 `/healthz`。恢复前不要把新旧 WAL/SHM 混在一起。快照、密钥必须来自同一次备份。
+
+完整数据库恢复会回滚密码和会话状态，现有隔离恢复测试刻意验证原 Cookie 可恢复认证。现代退出后残留的无效 HttpOnly Cookie，如果对应已撤销会话被旧快照恢复，可能重新可用；正式回滚或灾难恢复应按恢复策略统一撤销历史会话并要求重新登录。这里明确运维恢复边界，不改变现有恢复合同，本轮没有执行正式库恢复或会话清理。
 
 ### 12.3 升级
 
 本地执行 `make release`，将新包上传到服务器。先触发一次备份，再停止 Go 服务；将旧二进制复制到 `/opt/gk/var/gk.previous`，解压新包，检查文件可执行权限，启动服务并重新验收。保留并继续使用 `/opt/gk/var/db/gk.sqlite`、`secret.key` 和 `data/`，不要解压/覆盖数据库或密钥。
 
 若程序升级后执行了数据库 schema 迁移，回滚时同时恢复升级前 SQLite 快照与旧二进制。不要仅把旧程序复制回来后直接搭配未知的新 schema 运行。
+
+本轮升级要求 Go 1.26.8 或更高安全补丁，自动执行 v9/v10/v11 迁移，新增选项 OCR 文本、用量账本及草稿版本锁，并恢复历史可知计数。草稿保存/交卷请求必须携带 `draft_revision`，前后端须同时升级，旧页面应刷新；并发冲突返回 409，不能自动以旧答案重试覆盖。历史缺失用量无法补算，报告会标记未知成本。密钥不存在但已有加密配置时会拒绝启动，必须恢复匹配密钥，不能以新生成密钥代替。
+
+### 12.4 个人中心 v12 升级
+
+新程序继续追加 v12：创建并回填 `user_profile` 默认资料/偏好/目标，追加 `app_session.public_id` 和可空设备/登录时间/脱敏 IP 元数据，以及个人统计和会话索引。旧昵称仍在 `app_user`，密码、token 摘要、练习、草稿 revision 与密钥不被改写。历史会话显示未知信息；个人资料版本独立于草稿版本。
+
+发布前在隔离副本运行新二进制，确认启动后迁移至 v12；用已有普通用户登录检查默认资料及原草稿，保存非默认偏好并刷新，确认看板、续做、CSV 和会话。生成完整 bundle，先执行 `backup --verify-bundle`，再复制快照与匹配密钥至新的恢复目录；恢复环境清理冲突 `GK_SECRET_KEY`，验证原 Cookie、资料 revision、提交记录及再次保存。禁止在原备份目录直接启动服务或执行迁移。
+
+升级线上服务仍按 12.3 停服务/保留旧程序/安装新包执行，不重建题库、不更换有效密钥；前端必须随新二进制更新，浏览器刷新。回滚使用升级前数据库快照、匹配密钥和旧二进制；v12 新增资料与会话显示数据可能不在升级前快照中，需明确回滚恢复点，不进行手写删表降级。
+
+本地 `make release` 包含个人中心使用说明和集成交付报告，不包含数据库、密钥、备份、测试 fixture 或题库图片。传包前列出 `tar -tzf var/gk-linux-amd64.tar.gz` 并计算 `sha256sum var/gk-linux-amd64.tar.gz`。本轮只完成本地隔离库迁移/恢复、Chrome 页面回归与跨平台编译；线上 HTTPS/实际代理、压力/长时间运行、Windows/macOS 原生运行及异机完整恢复须在目标环境执行。完整证据见 [Task4 报告](personal-center-task4-report.md)。
+
+个人中心最终修复增加普通用户页面身份前提，无新增迁移或依赖。部署时必须使用包含新嵌入前端和服务端的新二进制，并刷新已有页面；反向代理必须透传 `X-GK-Expected-User` 请求 header；该前提只拒绝不授权，不能用作鉴权或改写用户选择。正式代理环境仍未测。服务器无 header 保持旧 API 兼容，所以旧缓存页面不具备新页面的账号前提保护；发布后请重新进入页面。出现 `account_changed` 409 时保留输入并重新进入，不应清除当前有效 Cookie。新本地包与旧封存包的证据分开记录，见 [最终修复记录](personal-center-final-fix-report.md)；未执行线上部署。
 
 ## 13. 服务器网站验收后再做蒸馏
 
@@ -394,6 +423,8 @@ free -h
 ```
 
 如果网站响应变慢或可用内存不足，先 `sudo systemctl stop gk-distill`。不要删除运行批次目录；保留相同 run_id 和桶归属文件可续跑。
+
+续跑要求提示词/规范表、题集内容、模型与端点保持一致。本轮提示词升为 v2，旧 v1 批次需使用新 run_id。相同数据库和批次通过 `.gk-run-locks` 内核锁排斥并发运行，不要删除锁文件；进程退出（包括异常被杀）会自动释放锁。部分失败命令现在返回非零，查看 `distill report` 后决定续跑；不能将 systemd 退出状态当成已处理全部题目。
 
 ## 14. 常见故障
 

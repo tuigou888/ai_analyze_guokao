@@ -1,0 +1,184 @@
+{
+  "date": "2026-10-06",
+  "status": "immutable local delivery evidence; pending independent focused review",
+  "directory": "test-artifacts/personal-center/_work/final-fix-sealed",
+  "archive": "var/gk-linux-amd64.tar.gz",
+  "archive_sha256": "5ee21b47fd71cc25206e4918e3d51d690aea35a87fa120ec64975cd32d9b2b4b",
+  "file_count": 43,
+  "files": {
+    "var/gk-linux-amd64.tar.gz": {
+      "size": 12109319,
+      "sha256": "5ee21b47fd71cc25206e4918e3d51d690aea35a87fa120ec64975cd32d9b2b4b"
+    },
+    "docs/personal-center-final-fix-report.md": {
+      "size": 8776,
+      "sha256": "8f8f8fb268061de3f7f14bf5fdcab00c0b6bcdf67dc2385340d736c102413f1a"
+    },
+    "test-artifacts/personal-center/personal-final-fix.diff": {
+      "size": 145404,
+      "sha256": "12131ae7c1acd0dffbf3ba1968cd9e4ac507034824c6bedd17d8badccc96b494"
+    },
+    "test-artifacts/personal-center/final-fix-cross-tab-red.json": {
+      "size": 994,
+      "sha256": "aa4f5444e339bc4e61f6030e63f67101b5ec4a9d2de5c4208040c2319f99840b"
+    },
+    "test-artifacts/personal-center/final-fix-cross-tab-results.json": {
+      "size": 2678,
+      "sha256": "8f5081c0f870fc7305dbf9b9e2bc26e0393b6b84a82eba783aba6aa4c0d9b0a3"
+    },
+    "test-artifacts/personal-center/final-fix-final-ordering4-results.json": {
+      "size": 527,
+      "sha256": "727a3bf99ce6a01e5e88f6735b3b5396033fa8db3628526bbac5033994de21b1"
+    },
+    "test-artifacts/personal-center/final-fix-known-logout-red.json": {
+      "size": 186,
+      "sha256": "8fcb14422b47770879c65b8f6bbd9889df478aebea697479932f916385087ad9"
+    },
+    "test-artifacts/personal-center/final-fix-known-logout-results.json": {
+      "size": 267,
+      "sha256": "659c175e38c484e5794fe03e4edf0e3ba25b977b210e6b1dfbac2110ca173775"
+    },
+    "test-artifacts/personal-center/final-fix-late-identity-red.json": {
+      "size": 144,
+      "sha256": "0318c16be64139a3cf2f052e076ae999106f9f7cbec036e7256e55d38057c6b6"
+    },
+    "test-artifacts/personal-center/final-fix-late-identity-results.json": {
+      "size": 362,
+      "sha256": "4e86a1075ae372f4bcc2cbe780c63e794d0a14a87d2185308d2d6d2c685319e2"
+    },
+    "test-artifacts/personal-center/final-fix-late-logout-red.json": {
+      "size": 180,
+      "sha256": "1a4ece7fcd8ef5a525cf4f19788c3a8778f516007195b31575736f22be294613"
+    },
+    "test-artifacts/personal-center/final-fix-late-logout-results.json": {
+      "size": 357,
+      "sha256": "1061651c569efb1196045d1b3a3ee82502019db4f02a535184d3136a411bf30f"
+    },
+    "test-artifacts/personal-center/final-fix-late-password-red.json": {
+      "size": 121,
+      "sha256": "f90d3a576ec266c80c78eaa6aed7cea8f4397480fc837fd1fd24456ee517672f"
+    },
+    "test-artifacts/personal-center/final-fix-late-password-results.json": {
+      "size": 359,
+      "sha256": "11147b3330f2eeebccd97378c6cc79f571639ad2bc1ea950bcebbed7a3be9a38"
+    },
+    "test-artifacts/personal-center/final-fix-late-revoke-results.json": {
+      "size": 364,
+      "sha256": "943dc3709f7a6d08f2724cd516637ed5f16b3ebf2e6f4ac943d10321001dc6b2"
+    },
+    "test-artifacts/personal-center/final-fix-old18-results.json": {
+      "size": 1093,
+      "sha256": "adfe0bd04a3bd3d39fd3f9bbd48f26bf718dcf5caf3b0d76fa420226e4ee227e"
+    },
+    "test-artifacts/personal-center/final-fix-old6-results.json": {
+      "size": 521,
+      "sha256": "3f3af640a57b2c8431173ff4a4f2290f0d0cf88f0d92a2bb6a4e5f2f652a3f6c"
+    },
+    "test-artifacts/personal-center/final-fix-ordering4-results.json": {
+      "size": 527,
+      "sha256": "727a3bf99ce6a01e5e88f6735b3b5396033fa8db3628526bbac5033994de21b1"
+    },
+    "test-artifacts/personal-center/final-fix-package-manifest.json": {
+      "size": 3188,
+      "sha256": "452e4289a8d97512ea5d2e348bf2e8924e042937ed8b1a6ec02b8a254686f2fa"
+    },
+    "test-artifacts/personal-center/final-fix-personal17-results.json": {
+      "size": 2084,
+      "sha256": "1482304daab076042367f92f73c9833cd1862f41c5c2c3a2f1f6696933d205b9"
+    },
+    "test-artifacts/personal-center/final-fix-results.json": {
+      "size": 37984,
+      "sha256": "0e5ea94634204c5e23ce506c3693c96f1a6f85329532e086dad6612ce3a82e3d"
+    },
+    "test-artifacts/personal-center/final-fix-root-verification.json": {
+      "size": 1513,
+      "sha256": "84ead12fb0569e24e81b29c6ee2043cadeb89da35eb2d85aa23282af6a4aa2ed"
+    },
+    "web/src/App.vue": {
+      "size": 3445,
+      "sha256": "ad1cccee8cf8fc6cc87fabcff13e188fa2b0bb36f80ac2e8c05384f74ce9f455"
+    },
+    "web/src/auth.js": {
+      "size": 2610,
+      "sha256": "69993a2c68099e81951871e9fec32154f69df11f8ebe84151261d40ad450017d"
+    },
+    "web/src/api.js": {
+      "size": 4731,
+      "sha256": "bc4c0c761c0203ed0717e1034e97a0ee3a4e05744c7ed1cc007de98f84a44d10"
+    },
+    "web/src/router/index.js": {
+      "size": 2656,
+      "sha256": "d5a2a0cd2fffa289ccbe421df7cd3a323364529ab5091cf85da1f8763a99e51b"
+    },
+    "web/src/views/Login.vue": {
+      "size": 3373,
+      "sha256": "2842ab8fbb285423a825b78e0a81894a15525cc873da9bb76a501725aa11ec3b"
+    },
+    "web/src/views/Account.vue": {
+      "size": 6597,
+      "sha256": "487f5e2667ad91fe9e94d56ffa15bd01d90afabbc0b257612315883ddbfa8eed"
+    },
+    "web/src/components/account/Security.vue": {
+      "size": 5997,
+      "sha256": "e4a6822af2a1a36789875c20ffa1f724a8406c03336e9fdc2ff7a53bd75071d3"
+    },
+    "web/src/components/account/Review.vue": {
+      "size": 4664,
+      "sha256": "292c292c30abb7b60c045d5207e01aa6fb60a44f5ad07e5c4e8f2796699b8fff"
+    },
+    "web/src/components/account/ProfileForm.vue": {
+      "size": 9996,
+      "sha256": "b97475ef34c83519faa02a35967e5911e5c06a95991f866c7b82802a30f3c048"
+    },
+    "internal/serve/study.go": {
+      "size": 9392,
+      "sha256": "4c6b297b51f4f6585963918f73f894f5aa068176de8a6c0cc6ffe919f042babf"
+    },
+    "Makefile": {
+      "size": 3680,
+      "sha256": "2069a3c0b9ce7cf7955a822ac3dd6921cfaa6a7b5ca6d19f96a17d66b1154722"
+    },
+    "docs/api-design.md": {
+      "size": 14139,
+      "sha256": "b1b289c4ee08566867e1bf7e3402889eb24a2b74551ddb57ab0fd1f31c3a7a3a"
+    },
+    "docs/deployment-2c4g.md": {
+      "size": 30565,
+      "sha256": "4c630c6ae3e26daf57250d4ea27feec1d35f7477fa3065c2de45c614f6197683"
+    },
+    "docs/personal-center.md": {
+      "size": 6024,
+      "sha256": "6814dbb478ef77f4ceb025015bccedf53c203ac460999090371e4be385aafe5b"
+    },
+    "docs/personal-center-task4-report.md": {
+      "size": 9194,
+      "sha256": "5bb62e8930e28faa238d1fe18b8e1aacae66774deb2aab6b2826b7cff0839824"
+    },
+    "docs/personal-center-progress.md": {
+      "size": 5883,
+      "sha256": "d663ef88528769bdd477cb134c91dbe1f846569077e3f79dac63a3b343731586"
+    },
+    "test-artifacts/personal_center_regression.py": {
+      "size": 64019,
+      "sha256": "92e5739ff32adb9af4f3e6df0b3c5af9fa925c18018a274bb546b5dd50d9d16c"
+    },
+    "test-artifacts/personal-center/task4-coverage.md": {
+      "size": 13061,
+      "sha256": "ba8380dbfe051cc4cdaafbb207ecbdf4837e387a4faa2ab10784613aa0423670"
+    },
+    "test-artifacts/personal-center/task4-package-audit.py": {
+      "size": 2901,
+      "sha256": "2c33e8222e157a52bb482e00482eaae6e4d59aabdcb59751d98c47d042ac6dc6"
+    },
+    "internal/serve/identity.go": {
+      "size": 953,
+      "sha256": "d2f95e7bbd4711d89b629eb5b01c5f1434f4d6df3157009850b13ada1d9a7a6f"
+    },
+    "internal/serve/personal_identity_test.go": {
+      "size": 7003,
+      "sha256": "636eff37f5764db40e74a5c498c49bad07f6b5086fff9716428ab8c83a142590"
+    }
+  },
+  "evidence_boundary": "Stable main identity/callback/guarded logout original45; final only known-stale branch changes directed7+ordering4. Final package byte-identical to final Linux compilation.",
+  "excluded": "No runtime DB/key/fixture. This receipt is excluded from its own files and review diff because it records diff SHA; no self-reference."
+}

@@ -1,0 +1,22 @@
+{
+  "checks": [
+    "four tabs and four types of charts use the real empty dashboard",
+    "full profile PUT persists across refresh and updates topbar",
+    "logout 503 keeps identity and subsequent newly edited profile still has tab/router protection",
+    "profile CAS retains local input, confirmed reload, dirty tab guard, password 400 retains login",
+    "all four tabs fit 375px without page overflow",
+    "real six submissions drive 16.7% accuracy, six minutes, achievements and keyboard chart values; no double-counted module duration",
+    "late real 7-day response cannot replace newer 90-day data; failed dashboard can retry",
+    "resume preserves saved answers and favorite session type; real wrongbook/module/concept buttons create compatible sessions; saved reading size applies to stems/options/analysis",
+    "400 preserves input/login, pending PUT freezes edits/tabs and prevents duplicates; refresh/router/logout guard dirty profile; saved defaults respect explicit URL",
+    "actual same-origin CSV download uses fixed client filename and BOM; over-limit API error visible",
+    "second device loads server preferences, single revoke requires confirmation, revoke-others preserves current Cookie; original statistics rebuild works",
+    "23 real isolated sessions paginate 20/3, legacy nullable metadata shows unknown; current session has no DELETE control and responses contain no token/hash",
+    "actual unmapped latest label reports sparse mapping and does not create invalid concept practice",
+    "stored expired exam date can remain while editing nickname; new past dates and the Beijing leap-year five-year calendar boundary reject inline",
+    "blob 401 dispatches the shared session-expired flow; user switch restores own defaults; current logout uses existing auth API",
+    "identity switch clears previous preference owner even when profile GET fails after Login.vue assigns the new user",
+    "delayed real A dashboard/profile reads and successful PUT ACK after logout/401 cannot replace B nickname/avatar/preferences"
+  ],
+  "console_errors": []
+}

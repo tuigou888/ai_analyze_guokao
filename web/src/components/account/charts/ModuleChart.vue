@@ -1,0 +1,8 @@
+<script setup>
+import { ref,computed } from 'vue'
+const props=defineProps({items:{type:Array,default:()=>[]}})
+const selected=ref('')
+const current=computed(()=>props.items.find(v=>v.module===selected.value))
+const accuracy=v=>v==null?'暂无作答':`${v.toFixed(1)}%`
+</script>
+<template><section class="pc-card pc-chart" data-chart="modules"><h2>六模块画像</h2><p class="muted small">所选期间正确率。少于 5 次作答，暂不足以判断掌握情况。</p><div class="pc-module-list"><button v-for="item in items" :key="item.module" class="pc-module-row" :aria-pressed="selected===item.module" @click="selected=item.module" @focus="selected=item.module" @mouseenter="selected=item.module"><span class="pc-module-label">{{ item.module }}<small>{{ item.answered }} 次 · {{ item.answered===0?'暂无样本':item.sufficient?'样本足够':'样本不足' }}</small></span><span class="pc-module-track"><span v-if="item.accuracy!=null" :style="{width:item.accuracy+'%'}"/><span v-else class="pc-no-sample">—</span></span><strong>{{ item.accuracy==null?'—':Math.round(item.accuracy)+'%' }}</strong></button></div><p class="pc-chart-value" role="status">{{ current ? `${current.module}：${current.correct} / ${current.answered} 次答对，${accuracy(current.accuracy)}${current.sufficient?'':'，样本不足'}` : '选择模块查看具体次数；空缺表示尚未作答。' }}</p><details class="pc-table-details"><summary>查看模块数据表</summary><div class="pc-table-scroll"><table><caption>模块正确率与样本量</caption><thead><tr><th>模块</th><th>作答</th><th>答对</th><th>正确率</th><th>样本</th></tr></thead><tbody><tr v-for="item in items" :key="item.module"><td>{{ item.module }}</td><td>{{ item.answered }}</td><td>{{ item.correct }}</td><td>{{ accuracy(item.accuracy) }}</td><td>{{ item.sufficient?'足够':'不足' }}</td></tr></tbody></table></div></details></section></template>

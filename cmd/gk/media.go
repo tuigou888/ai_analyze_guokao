@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 
 	"ai_analyze_guokao/internal/media"
 	"ai_analyze_guokao/internal/store"
@@ -155,10 +157,15 @@ func cmdMediaOCR(args []string, kind, engine, defaultScript string) error {
 		Limit:      *limit,
 		RetryError: *retry,
 	})
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelCleanup()
 	if err != nil {
+		if st != nil {
+			return errors.Join(err, media.FinishMediaRun(cleanupCtx, db, runID, st.Unique, st.Done, st.Failed+st.Missing, st.Model))
+		}
 		return err
 	}
-	if err := media.FinishMediaRun(ctx, db, runID, st.Unique, st.Done, st.Failed, st.Model); err != nil {
+	if err := media.FinishMediaRun(cleanupCtx, db, runID, st.Unique, st.Done, st.Failed+st.Missing, st.Model); err != nil {
 		return err
 	}
 
@@ -204,6 +211,7 @@ func cmdMediaBackfill(args []string) error {
 		st.FiguresReplaced, st.FiguresNoText, st.FiguresMissing)
 	fmt.Printf("写出 stem_with_text 的题 %d 道，写出 body_with_text 的材料 %d 条\n",
 		st.StemsFilled, st.MaterialsFilled)
+	fmt.Printf("写出 content_with_text 的选项 %d 条\n", st.OptionsFilled)
 	return nil
 }
 

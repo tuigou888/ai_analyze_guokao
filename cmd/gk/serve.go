@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,8 +28,28 @@ func cmdServe(args []string) error {
 	dataDir := fs.String("data", "data", "图片根目录（包含题目图/公式图）")
 	addr := fs.String("addr", "127.0.0.1:8080", "监听地址")
 	keyFile := fs.String("secret-key-file", secretKeyFile, "配置加密密钥文件")
+	proxyFlag := fs.String("trusted-proxies", "", "可信代理 CIDR（逗号分隔；默认不信任转发头）")
+	originFlag := fs.String("public-origin", "", "网站完整外部 Origin，例如 https://practice.example.com")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	var proxies []netip.Prefix
+	var publicOrigin string
+	if *originFlag != "" {
+		var e error
+		publicOrigin, e = serve.NormalizeOrigin(*originFlag)
+		if e != nil {
+			return e
+		}
+	}
+	for _, v := range strings.Split(*proxyFlag, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			p, e := netip.ParsePrefix(v)
+			if e != nil {
+				return fmt.Errorf("无效可信代理 %q: %w", v, e)
+			}
+			proxies = append(proxies, p)
+		}
 	}
 
 	db, err := store.Open(*dbFile)
@@ -55,6 +77,8 @@ func cmdServe(args []string) error {
 	}
 	srv := serve.New(settings, db, webAssets())
 	srv.DataDir = *dataDir
+	srv.TrustedProxies = proxies
+	srv.PublicOrigin = publicOrigin
 	httpSrv := &http.Server{
 		Addr:              *addr,
 		Handler:           srv.Routes(),

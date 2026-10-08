@@ -1,0 +1,1283 @@
+--- before/internal/store/schema.go
++++ after/internal/store/schema.go
+@@ -368,22 +368,42 @@
+ 	 model_config TEXT NOT NULL,model_response TEXT,tokens_in INTEGER NOT NULL,tokens_out INTEGER NOT NULL,cost_usd REAL,usage_known INTEGER NOT NULL,
+ 	 status TEXT NOT NULL,created_at TEXT NOT NULL);
+ 	 CREATE INDEX idx_call_run ON label_call(run_id);`,
+ 	// v11：多端草稿乐观锁，旧练习从 revision=0 开始。
+ 	`ALTER TABLE practice_session ADD COLUMN draft_revision INTEGER NOT NULL DEFAULT 0;`,
++	// v12：个人资料与公开会话管理；旧凭据和草稿保持原样。
++	`CREATE TABLE user_profile (
++ user_id INTEGER PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
++ bio TEXT NOT NULL DEFAULT '', avatar_id INTEGER NOT NULL DEFAULT 0,
++ daily_questions INTEGER NOT NULL DEFAULT 20, daily_minutes INTEGER NOT NULL DEFAULT 30,
++ exam_name TEXT NOT NULL DEFAULT '', exam_date TEXT NOT NULL DEFAULT '',
++ default_limit INTEGER NOT NULL DEFAULT 20, default_module TEXT NOT NULL DEFAULT '',
++ reading_size INTEGER NOT NULL DEFAULT 16, revision INTEGER NOT NULL DEFAULT 0,
++ updated_at TEXT NOT NULL
++);
++INSERT INTO user_profile(user_id,updated_at) SELECT id,created_at FROM app_user;
++ALTER TABLE app_session ADD COLUMN public_id TEXT;
++ALTER TABLE app_session ADD COLUMN created_at TEXT;
++ALTER TABLE app_session ADD COLUMN device_label TEXT;
++ALTER TABLE app_session ADD COLUMN ip_hint TEXT;
++UPDATE app_session SET public_id=lower(hex(randomblob(16)));
++CREATE UNIQUE INDEX idx_app_session_public ON app_session(public_id);
++CREATE INDEX idx_app_session_user ON app_session(user_id,expires_at);
++CREATE INDEX idx_practice_user_submitted ON practice_session(user_id,submitted_at);`,
+ }
+ 
+ // Open 打开（必要时创建）数据库并跑迁移。
+ func Open(path string) (*sql.DB, error) {
+ 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(ON)&_txlock=immediate", url.PathEscape(path))
+ 	db, err := sql.Open("sqlite", dsn)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	// modernc SQLite 在 WAL 模式下允许多个读连接，但写操作仍需串行获取锁。
+-	// 显式事务都是写事务，BEGIN IMMEDIATE 在读快照之前获取写锁，避免
+-	// DEFERRED 读转写的 BUSY_SNAPSHOT。普通 Query 仍可并发读取。
++	// 写事务使用 BEGIN IMMEDIATE，在读快照前获取写锁以避免 BUSY_SNAPSHOT。
++	// 分析读取需 BeginTx(ctx, &sql.TxOptions{ReadOnly:true})，驱动使用普通 BEGIN，
++	// 避免读取分析持有写锁；普通 Query 也可并发读取。
+ 	db.SetMaxOpenConns(5)
+ 	db.SetMaxIdleConns(5)
+ 	if err := db.Ping(); err != nil {
+ 		db.Close()
+ 		return nil, err
+--- before/internal/study/auth.go
++++ after/internal/study/auth.go
+@@ -12,10 +12,12 @@
+ 	"strings"
+ 	"time"
+ 	"unicode/utf8"
+ 
+ 	"golang.org/x/crypto/bcrypt"
++
++	"ai_analyze_guokao/internal/store"
+ )
+ 
+ var (
+ 	ErrInvalid       = errors.New("请求参数不合法")
+ 	ErrCredentials   = errors.New("账号或密码错误")
+@@ -27,11 +29,14 @@
+ 
+ const SessionTTL = 7 * 24 * time.Hour
+ 
+ var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("constant-timing-placeholder"), bcrypt.DefaultCost)
+ 
+-type Service struct{ DB *sql.DB }
++type Service struct {
++	DB    *sql.DB
++	Clock func() time.Time
++}
+ type User struct {
+ 	ID       int64  `json:"id"`
+ 	Username string `json:"username"`
+ 	Nickname string `json:"nickname"`
+ }
+@@ -55,21 +60,36 @@
+ 	}
+ 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+ 	if err != nil {
+ 		return User{}, err
+ 	}
+-	res, err := s.DB.ExecContext(ctx, `INSERT INTO app_user(username,password_hash,nickname,created_at) VALUES(?,?,?,?)`, username, string(hash), nickname, now())
++	var id int64
++	err = store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
++		created := s.clockNow().UTC().Format(time.RFC3339)
++		res, e := tx.ExecContext(ctx, `INSERT INTO app_user(username,password_hash,nickname,created_at) VALUES(?,?,?,?)`, username, string(hash), nickname, created)
++		if e != nil {
++			if strings.Contains(e.Error(), "UNIQUE") {
++				return ErrConflict
++			}
++			return e
++		}
++		id, e = res.LastInsertId()
++		if e != nil {
++			return e
++		}
++		_, e = tx.ExecContext(ctx, `INSERT INTO user_profile(user_id,updated_at) VALUES(?,?)`, id, created)
++		return e
++	})
+ 	if err != nil {
+-		if strings.Contains(err.Error(), "UNIQUE") {
+-			return User{}, ErrConflict
+-		}
+ 		return User{}, err
+ 	}
+-	id, err := res.LastInsertId()
+-	return User{id, username, nickname}, err
++	return User{id, username, nickname}, nil
+ }
+ func (s *Service) Login(ctx context.Context, username, password string) (string, User, error) {
++	return s.LoginWithMetadata(ctx, username, password, LoginMetadata{})
++}
++func (s *Service) LoginWithMetadata(ctx context.Context, username, password string, metadata LoginMetadata) (string, User, error) {
+ 	var u User
+ 	var hash string
+ 	err := s.DB.QueryRowContext(ctx, `SELECT id,username,nickname,password_hash FROM app_user WHERE username=?`, strings.TrimSpace(username)).Scan(&u.ID, &u.Username, &u.Nickname, &hash)
+ 	if errors.Is(err, sql.ErrNoRows) {
+ 		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+@@ -84,35 +104,48 @@
+ 	b := make([]byte, 32)
+ 	if _, err = rand.Read(b); err != nil {
+ 		return "", u, err
+ 	}
+ 	token := hex.EncodeToString(b)
+-	tx, err := s.DB.BeginTx(ctx, nil)
++	publicID, err := newPublicID()
+ 	if err != nil {
+ 		return "", u, err
+ 	}
+-	defer tx.Rollback()
+-	if _, err = tx.ExecContext(ctx, `DELETE FROM app_session WHERE expires_at<=?`, now()); err != nil {
+-		return "", u, err
++	timestamp := s.clockNow().UTC()
++	var device, ip any
++	if metadata.DeviceLabel != "" {
++		device = controlledDevice(metadata.DeviceLabel)
+ 	}
+-	res, err := tx.ExecContext(ctx, `INSERT INTO app_session(token,user_id,expires_at) SELECT ?,id,? FROM app_user WHERE id=? AND password_hash=?`, tokenHash(token), time.Now().UTC().Add(SessionTTL).Format(time.RFC3339), u.ID, hash)
++	if hint := maskIP(metadata.IP); hint != "" {
++		ip = hint
++	}
++	err = store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
++		if _, e := tx.ExecContext(ctx, `DELETE FROM app_session WHERE expires_at<=?`, timestamp.Format(time.RFC3339)); e != nil {
++			return e
++		}
++		res, e := tx.ExecContext(ctx, `INSERT INTO app_session(token,user_id,expires_at,public_id,created_at,device_label,ip_hint) SELECT ?,id,?,?,?,?,? FROM app_user WHERE id=? AND password_hash=?`, tokenHash(token), timestamp.Add(SessionTTL).Format(time.RFC3339), publicID, timestamp.Format(time.RFC3339), device, ip, u.ID, hash)
++		if e != nil {
++			return e
++		}
++		n, e := res.RowsAffected()
++		if e != nil {
++			return e
++		}
++		if n != 1 {
++			return ErrCredentials
++		}
++		_, e = tx.ExecContext(ctx, `UPDATE app_user SET last_login_at=? WHERE id=?`, timestamp.Format(time.RFC3339), u.ID)
++		return e
++	})
+ 	if err != nil {
+-		return "", u, err
++		return "", User{}, err
+ 	}
+-	if n, e := res.RowsAffected(); e != nil {
+-		return "", u, e
+-	} else if n != 1 {
+-		return "", u, ErrCredentials
+-	}
+-	if _, err = tx.ExecContext(ctx, `UPDATE app_user SET last_login_at=? WHERE id=?`, now(), u.ID); err != nil {
+-		return "", u, err
+-	}
+-	return token, u, tx.Commit()
++	return token, u, nil
+ }
+ func (s *Service) Verify(ctx context.Context, token string) (User, error) {
+ 	var u User
+-	err := s.DB.QueryRowContext(ctx, `SELECT u.id,u.username,u.nickname FROM app_session s JOIN app_user u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?`, tokenHash(token), now()).Scan(&u.ID, &u.Username, &u.Nickname)
++	err := s.DB.QueryRowContext(ctx, `SELECT u.id,u.username,u.nickname FROM app_session s JOIN app_user u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?`, tokenHash(token), s.clockNow().UTC().Format(time.RFC3339)).Scan(&u.ID, &u.Username, &u.Nickname)
+ 	if errors.Is(err, sql.ErrNoRows) {
+ 		err = ErrCredentials
+ 	}
+ 	return u, err
+ }
+--- before/internal/study/profile.go
++++ after/internal/study/profile.go
+@@ -0,0 +1,152 @@
++package study
++
++import (
++	"context"
++	"database/sql"
++	"errors"
++	"strings"
++	"time"
++	"unicode/utf8"
++
++	"ai_analyze_guokao/internal/store"
++)
++
++var ErrProfileConflict = errors.New("资料已在其他窗口更新，请重新加载后保存")
++
++type Profile struct {
++	Username       string `json:"username"`
++	Nickname       string `json:"nickname"`
++	Bio            string `json:"bio"`
++	AvatarID       int    `json:"avatar_id"`
++	CreatedAt      string `json:"created_at"`
++	UpdatedAt      string `json:"updated_at"`
++	DailyQuestions int    `json:"daily_questions"`
++	DailyMinutes   int    `json:"daily_minutes"`
++	ExamName       string `json:"exam_name"`
++	ExamDate       string `json:"exam_date"`
++	DefaultLimit   int    `json:"default_limit"`
++	DefaultModule  string `json:"default_module"`
++	ReadingSize    int    `json:"reading_size"`
++	Revision       int64  `json:"revision"`
++}
++
++type ProfileUpdate struct {
++	Nickname       string `json:"nickname"`
++	Bio            string `json:"bio"`
++	AvatarID       int    `json:"avatar_id"`
++	DailyQuestions int    `json:"daily_questions"`
++	DailyMinutes   int    `json:"daily_minutes"`
++	ExamName       string `json:"exam_name"`
++	ExamDate       string `json:"exam_date"`
++	DefaultLimit   int    `json:"default_limit"`
++	DefaultModule  string `json:"default_module"`
++	ReadingSize    int    `json:"reading_size"`
++	Revision       int64  `json:"revision"`
++}
++
++func (s *Service) clockNow() time.Time {
++	if s.Clock != nil {
++		return s.Clock()
++	}
++	return time.Now()
++}
++
++type profileReader interface {
++	QueryRowContext(context.Context, string, ...any) *sql.Row
++}
++
++func readProfile(ctx context.Context, db profileReader, user int64) (Profile, error) {
++	var p Profile
++	err := db.QueryRowContext(ctx, `SELECT u.username,u.nickname,u.created_at,
++ COALESCE(p.bio,''),COALESCE(p.avatar_id,0),COALESCE(p.daily_questions,20),COALESCE(p.daily_minutes,30),
++ COALESCE(p.exam_name,''),COALESCE(p.exam_date,''),COALESCE(p.default_limit,20),COALESCE(p.default_module,''),
++ COALESCE(p.reading_size,16),COALESCE(p.revision,0),COALESCE(p.updated_at,u.created_at)
++ FROM app_user u LEFT JOIN user_profile p ON p.user_id=u.id WHERE u.id=?`, user).Scan(&p.Username, &p.Nickname, &p.CreatedAt, &p.Bio, &p.AvatarID, &p.DailyQuestions, &p.DailyMinutes, &p.ExamName, &p.ExamDate, &p.DefaultLimit, &p.DefaultModule, &p.ReadingSize, &p.Revision, &p.UpdatedAt)
++	if errors.Is(err, sql.ErrNoRows) {
++		err = ErrNotFound
++	}
++	return p, err
++}
++
++func (s *Service) Profile(ctx context.Context, user int64) (Profile, error) {
++	return readProfile(ctx, s.DB, user)
++}
++
++func (s *Service) validateProfile(ctx context.Context, in ProfileUpdate) error {
++	if !utf8.ValidString(in.Nickname) || !utf8.ValidString(in.Bio) || !utf8.ValidString(in.ExamName) || utf8.RuneCountInString(in.Nickname) > 40 || utf8.RuneCountInString(in.Bio) > 200 || utf8.RuneCountInString(in.ExamName) > 40 || in.AvatarID < 0 || in.AvatarID > 7 || in.DailyQuestions < 5 || in.DailyQuestions > 200 || in.DailyMinutes < 5 || in.DailyMinutes > 180 || in.Revision < 0 || (in.DefaultLimit != 10 && in.DefaultLimit != 20 && in.DefaultLimit != 50) || (in.ReadingSize != 16 && in.ReadingSize != 18 && in.ReadingSize != 20) {
++		return ErrInvalid
++	}
++	if in.DefaultModule != "" {
++		var exists bool
++		if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM question WHERE module=?)`, in.DefaultModule).Scan(&exists); err != nil {
++			return err
++		}
++		if !exists {
++			return ErrInvalid
++		}
++	}
++	return nil
++}
++
++func (s *Service) validateExamDate(value, original string) error {
++	if value == "" {
++		return nil
++	}
++	zone := time.FixedZone("Asia/Shanghai", 8*60*60)
++	date, err := time.ParseInLocation("2006-01-02", value, zone)
++	now := s.clockNow().In(zone)
++	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
++	valid := err == nil && date.Format("2006-01-02") == value
++	// An unchanged, already reached exam date is retained for unrelated edits.
++	// original is read for this user inside the same revision-checked transaction.
++	if valid && value == original && !date.After(today) {
++		return nil
++	}
++	if !valid || !date.After(today) || date.After(today.AddDate(5, 0, 0)) {
++		return errors.Join(ErrInvalid, errors.New("考试日期需为未来日期，最多五年后"))
++	}
++	return nil
++}
++
++func (s *Service) UpdateProfile(ctx context.Context, user int64, in ProfileUpdate) (Profile, error) {
++	in.Nickname = strings.TrimSpace(in.Nickname)
++	in.Bio = strings.TrimSpace(in.Bio)
++	in.ExamName = strings.TrimSpace(in.ExamName)
++	if err := s.validateProfile(ctx, in); err != nil {
++		return Profile{}, err
++	}
++	var out Profile
++	err := store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
++		original, err := readProfile(ctx, tx, user)
++		if err != nil {
++			return err
++		}
++		if original.Revision != in.Revision {
++			return ErrProfileConflict
++		}
++		if err := s.validateExamDate(in.ExamDate, original.ExamDate); err != nil {
++			return err
++		}
++		// Missing legacy profile is materialized only on an explicit write.
++		if _, err := tx.ExecContext(ctx, `INSERT INTO user_profile(user_id,updated_at) SELECT id,created_at FROM app_user WHERE id=? ON CONFLICT(user_id) DO NOTHING`, user); err != nil {
++			return err
++		}
++		res, err := tx.ExecContext(ctx, `UPDATE user_profile SET bio=?,avatar_id=?,daily_questions=?,daily_minutes=?,exam_name=?,exam_date=?,default_limit=?,default_module=?,reading_size=?,revision=revision+1,updated_at=? WHERE user_id=? AND revision=?`, in.Bio, in.AvatarID, in.DailyQuestions, in.DailyMinutes, in.ExamName, in.ExamDate, in.DefaultLimit, in.DefaultModule, in.ReadingSize, s.clockNow().UTC().Format(time.RFC3339), user, in.Revision)
++		if err != nil {
++			return err
++		}
++		n, err := res.RowsAffected()
++		if err != nil {
++			return err
++		}
++		if n != 1 {
++			return ErrProfileConflict
++		}
++		if _, err = tx.ExecContext(ctx, `UPDATE app_user SET nickname=? WHERE id=?`, in.Nickname, user); err != nil {
++			return err
++		}
++		out, err = readProfile(ctx, tx, user)
++		return err
++	})
++	return out, err
++}
+--- before/internal/study/sessions.go
++++ after/internal/study/sessions.go
+@@ -0,0 +1,144 @@
++package study
++
++import (
++	"context"
++	"crypto/rand"
++	"database/sql"
++	"encoding/hex"
++	"errors"
++	"net/netip"
++	"strings"
++	"time"
++
++	"ai_analyze_guokao/internal/store"
++)
++
++type LoginMetadata struct {
++	DeviceLabel string
++	IP          string
++}
++
++type LoginSession struct {
++	PublicID    string  `json:"public_id"`
++	Current     bool    `json:"current"`
++	DeviceLabel *string `json:"device_label"`
++	IPHint      *string `json:"ip_hint"`
++	CreatedAt   *string `json:"created_at"`
++	ExpiresAt   string  `json:"expires_at"`
++}
++
++type SessionPage struct {
++	Items []LoginSession `json:"items"`
++	Total int            `json:"total"`
++	Page  int            `json:"page"`
++	Size  int            `json:"size"`
++}
++
++func newPublicID() (string, error) {
++	b := make([]byte, 16)
++	_, err := rand.Read(b)
++	return hex.EncodeToString(b), err
++}
++
++// All callers, including non-HTTP integrations, get bounded categories.
++func controlledDevice(label string) string {
++	parts := strings.Split(label, " / ")
++	if len(parts) != 2 {
++		return "信息未知"
++	}
++	allowedBrowser := map[string]bool{"Chrome": true, "Edge": true, "Firefox": true, "Safari": true, "其他浏览器": true}
++	allowedOS := map[string]bool{"Windows": true, "macOS": true, "Linux": true, "Android": true, "iOS": true, "未知系统": true}
++	if !allowedBrowser[parts[0]] || !allowedOS[parts[1]] {
++		return "信息未知"
++	}
++	return label
++}
++
++func maskIP(raw string) string {
++	ip, err := netip.ParseAddr(raw)
++	if err != nil {
++		return ""
++	}
++	ip = ip.Unmap()
++	if ip.Is4() {
++		value := ip.String()
++		return value[:strings.LastIndex(value, ".")] + ".*"
++	}
++	return netip.PrefixFrom(ip, 48).Masked().String()
++}
++
++func (s *Service) Sessions(ctx context.Context, user int64, token string, page int) (SessionPage, error) {
++	if page == 0 {
++		page = 1
++	}
++	if page < 1 || page > 1000000 {
++		return SessionPage{}, ErrInvalid
++	}
++	out := SessionPage{Items: []LoginSession{}, Page: page, Size: 20}
++	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
++	if err != nil {
++		return out, err
++	}
++	defer tx.Rollback()
++	stamp := s.clockNow().UTC().Format(time.RFC3339)
++	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_session WHERE user_id=? AND expires_at>?`, user, stamp).Scan(&out.Total); err != nil {
++		return out, err
++	}
++	rows, err := tx.QueryContext(ctx, `SELECT public_id,token=?,device_label,ip_hint,created_at,expires_at FROM app_session WHERE user_id=? AND expires_at>? ORDER BY created_at DESC,public_id LIMIT 20 OFFSET ?`, tokenHash(token), user, stamp, (page-1)*20)
++	if err != nil {
++		return out, err
++	}
++	defer rows.Close()
++	for rows.Next() {
++		var row LoginSession
++		if err = rows.Scan(&row.PublicID, &row.Current, &row.DeviceLabel, &row.IPHint, &row.CreatedAt, &row.ExpiresAt); err != nil {
++			return out, err
++		}
++		out.Items = append(out.Items, row)
++	}
++	if err = rows.Err(); err != nil {
++		return out, err
++	}
++	if err = rows.Close(); err != nil {
++		return out, err
++	}
++	return out, tx.Commit()
++}
++
++func (s *Service) RevokeSession(ctx context.Context, user int64, token, id string) error {
++	return store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
++		var current bool
++		err := tx.QueryRowContext(ctx, `SELECT token=? FROM app_session WHERE user_id=? AND public_id=? AND expires_at>?`, tokenHash(token), user, id, s.clockNow().UTC().Format(time.RFC3339)).Scan(&current)
++		if errors.Is(err, sql.ErrNoRows) {
++			return ErrNotFound
++		}
++		if err != nil {
++			return err
++		}
++		if current {
++			return errors.Join(ErrInvalid, errors.New("当前会话请使用退出登录"))
++		}
++		_, err = tx.ExecContext(ctx, `DELETE FROM app_session WHERE user_id=? AND public_id=?`, user, id)
++		return err
++	})
++}
++
++func (s *Service) RevokeOthers(ctx context.Context, user int64, token string) (int64, error) {
++	var count int64
++	err := store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
++		var exists bool
++		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM app_session WHERE user_id=? AND token=? AND expires_at>?)`, user, tokenHash(token), s.clockNow().UTC().Format(time.RFC3339)).Scan(&exists); err != nil {
++			return err
++		}
++		if !exists {
++			return ErrCredentials
++		}
++		res, err := tx.ExecContext(ctx, `DELETE FROM app_session WHERE user_id=? AND token<>?`, user, tokenHash(token))
++		if err != nil {
++			return err
++		}
++		count, err = res.RowsAffected()
++		return err
++	})
++	return count, err
++}
+--- before/internal/serve/study.go
++++ after/internal/serve/study.go
+@@ -46,11 +46,11 @@
+ 		writeErr(w, http.StatusServiceUnavailable, err.Error())
+ 	case errors.Is(err, study.ErrInvalid):
+ 		writeErr(w, 400, err.Error())
+ 	case errors.Is(err, study.ErrCredentials):
+ 		writeErr(w, 401, "账号或密码错误")
+-	case errors.Is(err, study.ErrConflict), errors.Is(err, study.ErrDraftConflict):
++	case errors.Is(err, study.ErrConflict), errors.Is(err, study.ErrDraftConflict), errors.Is(err, study.ErrProfileConflict):
+ 		writeErr(w, 409, err.Error())
+ 	case errors.Is(err, study.ErrNotFound):
+ 		writeErr(w, 404, err.Error())
+ 	case errors.Is(err, study.ErrForbidden):
+ 		writeErr(w, 403, err.Error())
+@@ -71,10 +71,11 @@
+ 	r.Post("/auth/register", s.register)
+ 	r.Post("/auth/login", s.userLogin)
+ 	r.Post("/auth/logout", s.userLogout)
+ 	r.Group(func(r chi.Router) {
+ 		r.Use(s.requireUser)
++		s.accountRoutes(r)
+ 		r.Get("/auth/me", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, currentUser(r)) })
+ 		r.Post("/auth/password", s.userPassword)
+ 		r.Get("/filters", func(w http.ResponseWriter, r *http.Request) { v, e := s.Study.Filters(r.Context()); s.respond(w, v, e) })
+ 		r.Get("/questions", func(w http.ResponseWriter, r *http.Request) {
+ 			v, e := s.Study.Questions(r.Context(), study.FilterFrom(r.URL.Query()))
+@@ -215,11 +216,11 @@
+ 		Password string `json:"password"`
+ 	}
+ 	if !decode(w, r, &in) {
+ 		return
+ 	}
+-	token, u, e := s.Study.Login(r.Context(), in.Username, in.Password)
++	token, u, e := s.Study.LoginWithMetadata(r.Context(), in.Username, in.Password, study.LoginMetadata{DeviceLabel: deviceLabel(r.UserAgent()), IP: clientIP(r, s.TrustedProxies)})
+ 	if e != nil {
+ 		s.studyError(w, e)
+ 		return
+ 	}
+ 	http.SetCookie(w, &http.Cookie{Name: userCookie, Value: token, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: int(study.SessionTTL.Seconds())})
+--- before/internal/serve/account.go
++++ after/internal/serve/account.go
+@@ -0,0 +1,108 @@
++package serve
++
++import (
++	"bytes"
++	"encoding/json"
++	"mime"
++	"net/http"
++	"strconv"
++	"strings"
++
++	"ai_analyze_guokao/internal/study"
++	"github.com/go-chi/chi/v5"
++)
++
++// accountRoutes is registered inside requireUser. Subsequent dashboard/export/
++// review handlers share this authenticated account boundary.
++func (s *Server) accountRoutes(r chi.Router) {
++	r.Get("/account/profile", func(w http.ResponseWriter, r *http.Request) {
++		v, e := s.Study.Profile(r.Context(), currentUser(r).ID)
++		s.respond(w, v, e)
++	})
++	r.Put("/account/profile", s.updateProfile)
++	r.Get("/account/sessions", func(w http.ResponseWriter, r *http.Request) {
++		page := 1
++		if raw := r.URL.Query().Get("page"); raw != "" {
++			n, e := strconv.Atoi(raw)
++			if e != nil || n < 1 {
++				s.studyError(w, study.ErrInvalid)
++				return
++			}
++			page = n
++		}
++		v, e := s.Study.Sessions(r.Context(), currentUser(r).ID, cookieToken(r, userCookie), page)
++		s.respond(w, v, e)
++	})
++	r.Delete("/account/sessions/{public_id}", func(w http.ResponseWriter, r *http.Request) {
++		s.respond(w, map[string]any{"ok": true}, s.Study.RevokeSession(r.Context(), currentUser(r).ID, cookieToken(r, userCookie), chi.URLParam(r, "public_id")))
++	})
++	r.Post("/account/sessions/revoke-others", func(w http.ResponseWriter, r *http.Request) {
++		ct, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
++		if err != nil || ct != "application/json" {
++			writeErr(w, http.StatusUnsupportedMediaType, "请求必须使用 application/json")
++			return
++		}
++		v, e := s.Study.RevokeOthers(r.Context(), currentUser(r).ID, cookieToken(r, userCookie))
++		s.respond(w, map[string]any{"revoked": v}, e)
++	})
++}
++
++func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
++	var in study.ProfileUpdate
++	var raw json.RawMessage
++	if !decode(w, r, &raw) {
++		return
++	}
++	var fields map[string]json.RawMessage
++	if err := json.Unmarshal(raw, &fields); err != nil {
++		writeErr(w, http.StatusBadRequest, "资料必须为 JSON 对象")
++		return
++	}
++	editableFields := []string{"nickname", "bio", "avatar_id", "daily_questions", "daily_minutes", "exam_name", "exam_date", "default_limit", "default_module", "reading_size", "revision"}
++	if len(fields) != len(editableFields) {
++		writeErr(w, http.StatusBadRequest, "请仅提交完整的可编辑资料字段")
++		return
++	}
++	for _, key := range editableFields {
++		value, ok := fields[key]
++		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
++			writeErr(w, http.StatusBadRequest, "资料字段缺失: "+key)
++			return
++		}
++	}
++	decoder := json.NewDecoder(bytes.NewReader(raw))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(&in); err != nil {
++		writeErr(w, http.StatusBadRequest, "资料字段不合法: "+err.Error())
++		return
++	}
++	v, e := s.Study.UpdateProfile(r.Context(), currentUser(r).ID, in)
++	s.respond(w, v, e)
++}
++
++func deviceLabel(ua string) string {
++	browser, os := "其他浏览器", "未知系统"
++	switch {
++	case strings.Contains(ua, "Edg/") || strings.Contains(ua, "EdgA/") || strings.Contains(ua, "EdgiOS/"):
++		browser = "Edge"
++	case strings.Contains(ua, "Firefox/") || strings.Contains(ua, "FxiOS/"):
++		browser = "Firefox"
++	case strings.Contains(ua, "Chrome/") || strings.Contains(ua, "CriOS/"):
++		browser = "Chrome"
++	case strings.Contains(ua, "Safari/"):
++		browser = "Safari"
++	}
++	switch {
++	case strings.Contains(ua, "Android"):
++		os = "Android"
++	case strings.Contains(ua, "iPhone") || strings.Contains(ua, "iPad"):
++		os = "iOS"
++	case strings.Contains(ua, "Windows"):
++		os = "Windows"
++	case strings.Contains(ua, "Mac OS X"):
++		os = "macOS"
++	case strings.Contains(ua, "Linux"):
++		os = "Linux"
++	}
++	return browser + " / " + os
++}
+--- before/internal/serve/personal_profile_test.go
++++ after/internal/serve/personal_profile_test.go
+@@ -0,0 +1,475 @@
++package serve
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"net/netip"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++)
++
++func profileBody(t *testing.T, changes map[string]any) string {
++	t.Helper()
++	v := map[string]any{"nickname": "新昵称", "bio": "简介", "avatar_id": 7, "daily_questions": 20, "daily_minutes": 30, "exam_name": "国考", "exam_date": "", "default_limit": 20, "default_module": "资料分析", "reading_size": 18, "revision": 0}
++	for k, x := range changes {
++		v[k] = x
++	}
++	b, err := json.Marshal(v)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return string(b)
++}
++
++// Catches missing routes/defaults, an implicit GET write, nickname drift and lost CAS.
++func TestPersonalProfileDefaultsUpdateCAS(t *testing.T) {
++	s, db := fixture(t)
++	h := s.Routes()
++	alice := account(t, h, "profile_alice")
++	bob := account(t, h, "profile_bob")
++	var oldHash, oldToken string
++	if err := db.QueryRow(`SELECT u.password_hash,s.token FROM app_user u JOIN app_session s ON s.user_id=u.id WHERE u.id=1`).Scan(&oldHash, &oldToken); err != nil {
++		t.Fatal(err)
++	}
++	w, v := requestTest(t, h, "GET", "/api/account/profile", "", alice)
++	if w.Code != 200 {
++		t.Fatalf("default profile: %d %s", w.Code, w.Body.String())
++	}
++	for k, want := range map[string]any{"username": "profile_alice", "nickname": "", "bio": "", "avatar_id": float64(0), "daily_questions": float64(20), "daily_minutes": float64(30), "default_limit": float64(20), "reading_size": float64(16), "revision": float64(0)} {
++		if v[k] != want {
++			t.Fatalf("%s=%v want %v", k, v[k], want)
++		}
++	}
++	if v["created_at"] == "" || v["updated_at"] == "" {
++		t.Fatal("missing dates", v)
++	}
++	if _, err := db.Exec(`DELETE FROM user_profile WHERE user_id=1`); err != nil {
++		t.Fatal(err)
++	}
++	w, _ = requestTest(t, h, "GET", "/api/account/profile", "", alice)
++	if w.Code != 200 {
++		t.Fatal(w.Body.String())
++	}
++	var count int
++	if err := db.QueryRow(`SELECT COUNT(*) FROM user_profile WHERE user_id=1`).Scan(&count); err != nil || count != 0 {
++		t.Fatal("GET wrote profile", count, err)
++	}
++	w, v = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, nil), alice)
++	if w.Code != 200 || v["revision"] != float64(1) || v["nickname"] != "新昵称" {
++		t.Fatal("save", w.Code, w.Body.String())
++	}
++	var newHash, newToken string
++	if err := db.QueryRow(`SELECT u.password_hash,s.token FROM app_user u JOIN app_session s ON s.user_id=u.id WHERE u.id=1`).Scan(&newHash, &newToken); err != nil || newHash != oldHash || newToken != oldToken {
++		t.Fatal("profile changed credentials", err)
++	}
++	w, _ = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"nickname": "陈旧昵称"}), alice)
++	if w.Code != 409 {
++		t.Fatal("stale CAS", w.Code, w.Body.String())
++	}
++	w, v = requestTest(t, h, "GET", "/api/auth/me", "", alice)
++	if w.Code != 200 || v["nickname"] != "新昵称" {
++		t.Fatal("nickname atomicity", w.Code, v)
++	}
++	w, v = requestTest(t, h, "GET", "/api/account/profile", "", bob)
++	if w.Code != 200 || v["nickname"] != "" || v["revision"] != float64(0) {
++		t.Fatal("isolation", w.Code, v)
++	}
++}
++
++// Catches accepting forbidden enums/targets/dates, missing revisions and client identities.
++func TestPersonalProfileRejectsInvalidAndUnauthorized(t *testing.T) {
++	s, _ := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "profile_validation")
++	for _, change := range []map[string]any{{"avatar_id": 8}, {"avatar_id": -1}, {"reading_size": 17}, {"default_limit": 30}, {"daily_questions": 4}, {"daily_questions": 201}, {"daily_minutes": 4}, {"daily_minutes": 181}, {"default_module": "不存在"}, {"bio": strings.Repeat("字", 201)}, {"nickname": strings.Repeat("字", 41)}, {"exam_name": strings.Repeat("字", 41)}, {"exam_date": "2020-01-01"}, {"exam_date": "2099-01-01"}, {"exam_date": "2026-02-30"}, {"revision": -1}, {"revision": nil}, {"user_id": 2}, {"username": "other"}} {
++		w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, change), cookie)
++		if w.Code != 400 {
++			t.Fatalf("change %v: %d %s", change, w.Code, w.Body.String())
++		}
++	}
++	w, _ := requestTest(t, h, "GET", "/api/account/profile", "", nil)
++	if w.Code != 401 {
++		t.Fatal("anonymous", w.Code)
++	}
++	w, _ = requestTest(t, h, "GET", "/api/account/profile", "", &http.Cookie{Name: sessionCookie, Value: cookie.Value})
++	if w.Code != 401 {
++		t.Fatal("admin cookie accepted as user", w.Code)
++	}
++	r := httptest.NewRequest("PUT", "/api/account/profile", strings.NewReader(profileBody(t, nil)))
++	r.Header.Set("Origin", "https://evil.example")
++	r.Header.Set("Content-Type", "application/json")
++	r.AddCookie(cookie)
++	out := httptest.NewRecorder()
++	h.ServeHTTP(out, r)
++	if out.Code != 403 {
++		t.Fatal("cross origin", out.Code)
++	}
++}
++
++// Catches secret exposure, cross-user deletion, current deletion and wrong revoke-others filtering.
++func TestPersonalSessionsIsolationAndRevocation(t *testing.T) {
++	s, db := fixture(t)
++	h := s.Routes()
++	alice := account(t, h, "session_alice")
++	bob := account(t, h, "session_bob")
++	w, _ := requestTest(t, h, "POST", "/api/auth/login", `{"username":"session_alice","password":"testpassword"}`, nil)
++	if w.Code != 200 {
++		t.Fatal(w.Body.String())
++	}
++	other := w.Result().Cookies()[0]
++	w, v := requestTest(t, h, "GET", "/api/account/sessions", "", alice)
++	if w.Code != 200 {
++		t.Fatalf("sessions: %d %s", w.Code, w.Body.String())
++	}
++	if v["total"] != float64(2) || v["size"] != float64(20) {
++		t.Fatal(v)
++	}
++	var currentID, otherID string
++	for _, value := range v["items"].([]any) {
++		row := value.(map[string]any)
++		id := row["public_id"].(string)
++		if id == "" || id == alice.Value || id == other.Value {
++			t.Fatal("credential as ID", row)
++		}
++		if row["current"] == true {
++			currentID = id
++		} else {
++			otherID = id
++		}
++		for _, key := range []string{"token", "token_hash", "hash"} {
++			if _, ok := row[key]; ok {
++				t.Fatal("secret field", row)
++			}
++		}
++	}
++	var stored string
++	if err := db.QueryRow(`SELECT token FROM app_session WHERE user_id=1 LIMIT 1`).Scan(&stored); err != nil {
++		t.Fatal(err)
++	}
++	if strings.Contains(w.Body.String(), stored) {
++		t.Fatal("hash leaked")
++	}
++	for _, check := range []struct {
++		id     string
++		cookie *http.Cookie
++		want   int
++	}{{currentID, alice, 400}, {otherID, bob, 404}, {"missing", alice, 404}, {otherID, alice, 200}} {
++		w, _ = requestTest(t, h, "DELETE", "/api/account/sessions/"+check.id, "", check.cookie)
++		if w.Code != check.want {
++			t.Fatal("delete", check.want, w.Code, w.Body.String())
++		}
++	}
++	w, _ = requestTest(t, h, "GET", "/api/auth/me", "", other)
++	if w.Code != 401 {
++		t.Fatal("revoked cookie remains valid", w.Code)
++	}
++	w, _ = requestTest(t, h, "POST", "/api/auth/login", `{"username":"session_alice","password":"testpassword"}`, nil)
++	third := w.Result().Cookies()[0]
++	w, v = requestTest(t, h, "POST", "/api/account/sessions/revoke-others", "", alice)
++	if w.Code != 200 || v["revoked"] != float64(1) {
++		t.Fatal("revoke others", w.Code, v)
++	}
++	for _, check := range []struct {
++		cookie *http.Cookie
++		want   int
++	}{{alice, 200}, {third, 401}, {bob, 200}} {
++		w, _ = requestTest(t, h, "GET", "/api/auth/me", "", check.cookie)
++		if w.Code != check.want {
++			t.Fatal("cookie status", w.Code, check.want)
++		}
++	}
++}
++
++// Catches storing raw IPs or trusting a forged XFF and rendering arbitrary UA as device labels.
++func TestPersonalLoginMetadata(t *testing.T) {
++	s, db := fixture(t)
++	h := s.Routes()
++	account(t, h, "metadata_user")
++	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"metadata_user","password":"testpassword"}`))
++	r.RemoteAddr = "203.0.113.42:1234"
++	r.Header.Set("Origin", "http://example.com")
++	r.Header.Set("Content-Type", "application/json")
++	r.Header.Set("X-Forwarded-For", "198.51.100.1")
++	r.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0 Safari/537.36")
++	w := httptest.NewRecorder()
++	h.ServeHTTP(w, r)
++	if w.Code != 200 {
++		t.Fatal(w.Code, w.Body.String())
++	}
++	cookie := w.Result().Cookies()[0]
++	w, v := requestTest(t, h, "GET", "/api/account/sessions", "", cookie)
++	if w.Code != 200 {
++		t.Fatal(w.Code, w.Body.String())
++	}
++	for _, x := range v["items"].([]any) {
++		row := x.(map[string]any)
++		if row["current"] == true {
++			if row["ip_hint"] != "203.0.113.*" || row["device_label"] != "Chrome / Windows" || row["created_at"] == nil {
++				t.Fatal("metadata", row)
++			}
++		}
++	}
++	var raw int
++	if err := db.QueryRow(`SELECT COUNT(*) FROM app_session WHERE ip_hint LIKE '%42%' OR ip_hint LIKE '%198.51%'`).Scan(&raw); err != nil || raw != 0 {
++		t.Fatal("raw or spoofed IP stored", raw, err)
++	}
++}
++
++// Catches partial PUTs resetting saved fields and null becoming a valid zero enum.
++func TestPersonalProfileRequiresCompleteEditableFields(t *testing.T) {
++	s, _ := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "complete_profile")
++	var input map[string]any
++	if err := json.Unmarshal([]byte(profileBody(t, nil)), &input); err != nil {
++		t.Fatal(err)
++	}
++	for key := range input {
++		for _, null := range []bool{false, true} {
++			var v map[string]any
++			_ = json.Unmarshal([]byte(profileBody(t, nil)), &v)
++			if null {
++				v[key] = nil
++			} else {
++				delete(v, key)
++			}
++			raw, _ := json.Marshal(v)
++			w, _ := requestTest(t, h, "PUT", "/api/account/profile", string(raw), cookie)
++			if w.Code != 400 {
++				t.Fatalf("missing/null %s null=%t: %d %s", key, null, w.Code, w.Body.String())
++			}
++		}
++	}
++	w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"Avatar_ID": 0}), cookie)
++	if w.Code != 400 {
++		t.Fatal("non-whitelisted alternate casing", w.Code, w.Body.String())
++	}
++}
++
++// Catches accepting two concurrent edits from the same revision.
++func TestPersonalProfileConcurrentCAS(t *testing.T) {
++	s, _ := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "concurrent_profile")
++	var wg sync.WaitGroup
++	codes := make(chan int, 2)
++	for _, nickname := range []string{"窗口甲", "窗口乙"} {
++		body := profileBody(t, map[string]any{"nickname": nickname})
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			r := httptest.NewRequest("PUT", "/api/account/profile", strings.NewReader(body))
++			r.Header.Set("Origin", "http://example.com")
++			r.Header.Set("Content-Type", "application/json")
++			r.AddCookie(cookie)
++			w := httptest.NewRecorder()
++			h.ServeHTTP(w, r)
++			codes <- w.Code
++		}()
++	}
++	wg.Wait()
++	close(codes)
++	counts := map[int]int{}
++	for code := range codes {
++		counts[code]++
++	}
++	if counts[200] != 1 || counts[409] != 1 {
++		t.Fatal(counts)
++	}
++	w, v := requestTest(t, h, "GET", "/api/account/profile", "", cookie)
++	if w.Code != 200 || v["revision"] != float64(1) {
++		t.Fatal(w.Code, v)
++	}
++}
++
++// Catches non-atomic registration and profile/nickname writes when a constraint fails.
++func TestPersonalProfileWriteAtomicity(t *testing.T) {
++	s, db := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "atomic_profile")
++	if _, err := db.Exec(`CREATE TRIGGER fail_nickname BEFORE UPDATE OF nickname ON app_user BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`); err != nil {
++		t.Fatal(err)
++	}
++	w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, nil), cookie)
++	if w.Code != 500 {
++		t.Fatal(w.Code, w.Body.String())
++	}
++	var revision int64
++	var bio string
++	if err := db.QueryRow(`SELECT revision,bio FROM user_profile WHERE user_id=1`).Scan(&revision, &bio); err != nil || revision != 0 || bio != "" {
++		t.Fatal("profile partial commit", revision, bio, err)
++	}
++	if _, err := db.Exec(`CREATE TRIGGER fail_profile BEFORE INSERT ON user_profile BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`); err != nil {
++		t.Fatal(err)
++	}
++	_, err := s.Study.Register(context.Background(), "failed_registration", "testpassword", "")
++	if err == nil {
++		t.Fatal("failure ignored")
++	}
++	var count int
++	if err = db.QueryRow(`SELECT COUNT(*) FROM app_user WHERE username='failed_registration'`).Scan(&count); err != nil || count != 0 {
++		t.Fatal("orphan user", count, err)
++	}
++}
++
++// Catches wrong Beijing date edges and failures to persist valid enum/Unicode boundaries.
++func TestPersonalProfileDateAndUnicodeBoundaries(t *testing.T) {
++	s, _ := fixture(t)
++	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 16, 30, 0, 0, time.UTC) }
++	h := s.Routes()
++	cookie := account(t, h, "boundary_profile")
++	for _, date := range []string{"2026-10-04", "2026-10-05", "2031-10-06"} {
++		w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": date}), cookie)
++		if w.Code != 400 {
++			t.Fatal(date, w.Code, w.Body.String())
++		}
++	}
++	w, v := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2031-10-05", "nickname": strings.Repeat("字", 40), "bio": strings.Repeat("字", 200), "exam_name": strings.Repeat("字", 40), "daily_questions": 200, "daily_minutes": 180, "default_limit": 50, "reading_size": 20}), cookie)
++	if w.Code != 200 || v["exam_date"] != "2031-10-05" {
++		t.Fatal(w.Code, w.Body.String())
++	}
++}
++
++// Catches POST actions skipping JSON checks and DELETE actions skipping Origin checks.
++func TestPersonalSessionWriteRequestSecurity(t *testing.T) {
++	s, _ := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "session_security")
++	for _, check := range []struct {
++		method, path, origin, ct string
++		want                     int
++	}{
++		{"POST", "/api/account/sessions/revoke-others", "http://example.com", "text/plain", 415},
++		{"POST", "/api/account/sessions/revoke-others", "https://evil.example", "application/json", 403},
++		{"DELETE", "/api/account/sessions/missing", "https://evil.example", "", 403},
++		{"DELETE", "/api/account/sessions/missing", "", "", 403},
++	} {
++		r := httptest.NewRequest(check.method, check.path, nil)
++		r.Header.Set("Origin", check.origin)
++		r.Header.Set("Content-Type", check.ct)
++		r.AddCookie(cookie)
++		w := httptest.NewRecorder()
++		h.ServeHTTP(w, r)
++		if w.Code != check.want {
++			t.Fatal(check, w.Code, w.Body.String())
++		}
++	}
++}
++
++// Catches returning expired/foreign sessions, unbounded pages and fabricated historical data.
++func TestPersonalSessionsPaginationLegacyAndExpiry(t *testing.T) {
++	s, db := fixture(t)
++	h := s.Routes()
++	cookie := account(t, h, "paged_sessions")
++	account(t, h, "other_sessions")
++	for i := 0; i < 21; i++ {
++		id := fmt.Sprintf("synthetic-public-%02d", i)
++		token := fmt.Sprintf("synthetic-hash-%02d", i)
++		if _, err := db.Exec(`INSERT INTO app_session(token,user_id,expires_at,public_id) VALUES(?,1,'2099-01-01T00:00:00Z',?)`, token, id); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if _, err := db.Exec(`INSERT INTO app_session(token,user_id,expires_at,public_id) VALUES('expired-hash',1,'2000-01-01T00:00:00Z','expired-public')`); err != nil {
++		t.Fatal(err)
++	}
++	seen := map[string]bool{}
++	for _, check := range []struct{ page, count int }{{1, 20}, {2, 2}, {3, 0}} {
++		w, v := requestTest(t, h, "GET", fmt.Sprintf("/api/account/sessions?page=%d", check.page), "", cookie)
++		if w.Code != 200 || v["total"] != float64(22) || v["page"] != float64(check.page) || len(v["items"].([]any)) != check.count {
++			t.Fatal(w.Code, w.Body.String())
++		}
++		for _, x := range v["items"].([]any) {
++			row := x.(map[string]any)
++			id := row["public_id"].(string)
++			if seen[id] || id == "expired-public" {
++				t.Fatal("duplicate/expired", id)
++			}
++			seen[id] = true
++			if strings.HasPrefix(id, "synthetic-") && (row["created_at"] != nil || row["device_label"] != nil || row["ip_hint"] != nil) {
++				t.Fatal("fabricated metadata", row)
++			}
++		}
++	}
++	for _, page := range []string{"-1", "0", "abc", "1000001"} {
++		w, _ := requestTest(t, h, "GET", "/api/account/sessions?page="+page, "", cookie)
++		if w.Code != 400 {
++			t.Fatal(page, w.Code)
++		}
++	}
++}
++
++// Catches dropping the trusted-proxy algorithm or storing an IPv6 host address.
++func TestPersonalLoginMetadataTrustedIPv6(t *testing.T) {
++	s, _ := fixture(t)
++	s.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
++	h := s.Routes()
++	account(t, h, "ipv6_metadata")
++	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"ipv6_metadata","password":"testpassword"}`))
++	r.RemoteAddr = "10.0.0.2:1234"
++	r.Header.Set("Origin", "http://example.com")
++	r.Header.Set("Content-Type", "application/json")
++	r.Header.Set("X-Forwarded-For", "2001:db8:abcd:1234::42, 10.0.0.3")
++	r.Header.Set("User-Agent", "Mozilla/5.0 (iPhone) CriOS/123.0 Safari/537.36")
++	w := httptest.NewRecorder()
++	h.ServeHTTP(w, r)
++	if w.Code != 200 {
++		t.Fatal(w.Code, w.Body.String())
++	}
++	cookie := w.Result().Cookies()[0]
++	w, v := requestTest(t, h, "GET", "/api/account/sessions", "", cookie)
++	if w.Code != 200 {
++		t.Fatal(w.Code, w.Body.String())
++	}
++	for _, x := range v["items"].([]any) {
++		row := x.(map[string]any)
++		if row["current"] == true && (row["ip_hint"] != "2001:db8:abcd::/48" || row["device_label"] != "Chrome / iOS") {
++			t.Fatal(row)
++		}
++	}
++}
++
++// Catches expired saved exam dates blocking unrelated edits or another user's
++// old date being accepted as a legacy exception.
++func TestPersonalProfilePreservesOwnExpiredExamDate(t *testing.T) {
++	s, _ := fixture(t)
++	stamp := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
++	s.Study.Clock = func() time.Time { return stamp }
++	h := s.Routes()
++	alice := account(t, h, "exam_alice")
++	bob := account(t, h, "exam_bob")
++	w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2026-10-05"}), alice)
++	if w.Code != 200 {
++		t.Fatal(w.Code, w.Body.String())
++	}
++	stamp = stamp.AddDate(0, 0, 1)
++	w, v := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2026-10-05", "revision": 1, "nickname": "日期已到"}), alice)
++	if w.Code != 200 || v["exam_date"] != "2026-10-05" {
++		t.Fatal("today's original date blocked edit", w.Code, w.Body.String())
++	}
++	stamp = stamp.AddDate(0, 0, 1)
++	w, v = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2026-10-05", "revision": 2, "nickname": "保留过期日期"}), alice)
++	if w.Code != 200 || v["revision"] != float64(3) {
++		t.Fatal("expired original date blocked edit", w.Code, w.Body.String())
++	}
++	w, _ = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2026-10-05", "revision": 2}), alice)
++	if w.Code != 409 {
++		t.Fatal("expired-date exception bypassed CAS", w.Code, w.Body.String())
++	}
++	w, _ = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2026-10-05"}), bob)
++	if w.Code != 400 {
++		t.Fatal("other user's expired date accepted", w.Code, w.Body.String())
++	}
++	w, _ = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2026-10-04", "revision": 3}), alice)
++	if w.Code != 400 {
++		t.Fatal("changed past date accepted", w.Code, w.Body.String())
++	}
++	w, v = requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "", "revision": 3}), alice)
++	if w.Code != 200 || v["exam_date"] != "" {
++		t.Fatal("cannot clear expired date", w.Code, w.Body.String())
++	}
++}
+--- before/internal/store/personal_migration_test.go
++++ after/internal/store/personal_migration_test.go
+@@ -0,0 +1,45 @@
++package store
++
++import (
++	"path/filepath"
++	"testing"
++)
++
++// Catches destructive v12 upgrades and fabricated legacy metadata.
++func TestPersonalMigrationFromV11PreservesSecretsAndDraft(t *testing.T) {
++	all := migrations
++	defer func() { migrations = all }()
++	migrations = migrations[:11]
++	path := filepath.Join(t.TempDir(), "old.sqlite")
++	db, err := Open(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, q := range []string{`INSERT INTO app_user(id,username,password_hash,nickname,created_at) VALUES(1,'old_user','unchanged-hash','旧昵称','2025-01-01T00:00:00Z')`, `INSERT INTO app_session(token,user_id,expires_at) VALUES('unchanged-token-hash',1,'2099-01-01T00:00:00Z')`, `INSERT INTO practice_session(id,user_id,kind,spec,question_ids,started_at,draft,draft_revision) VALUES(1,1,'single','{}','[]','2026-01-01T00:00:00Z','[{"answer":"A"}]',3)`} {
++		if _, err = db.Exec(q); err != nil {
++			t.Fatal(err)
++		}
++	}
++	db.Close()
++	migrations = all
++	db, err = Open(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer db.Close()
++	var hash, nick, token, publicID, draft string
++	var rev int
++	if err = db.QueryRow(`SELECT password_hash,nickname FROM app_user WHERE id=1`).Scan(&hash, &nick); err != nil || hash != "unchanged-hash" || nick != "旧昵称" {
++		t.Fatal(hash, nick, err)
++	}
++	if err = db.QueryRow(`SELECT token,public_id FROM app_session WHERE user_id=1 AND created_at IS NULL AND device_label IS NULL AND ip_hint IS NULL`).Scan(&token, &publicID); err != nil || token != "unchanged-token-hash" || len(publicID) < 32 {
++		t.Fatal("session migration", token, publicID, err)
++	}
++	if err = db.QueryRow(`SELECT draft,draft_revision FROM practice_session WHERE id=1`).Scan(&draft, &rev); err != nil || draft != `[{"answer":"A"}]` || rev != 3 {
++		t.Fatal("draft changed", draft, rev, err)
++	}
++	var avatar, questions, minutes, limit, size int
++	if err = db.QueryRow(`SELECT avatar_id,daily_questions,daily_minutes,default_limit,reading_size FROM user_profile WHERE user_id=1`).Scan(&avatar, &questions, &minutes, &limit, &size); err != nil || avatar != 0 || questions != 20 || minutes != 30 || limit != 20 || size != 16 {
++		t.Fatal("defaults", err, avatar, questions, minutes, limit, size)
++	}
++}
+--- before/internal/study/personal_auth_test.go
++++ after/internal/study/personal_auth_test.go
+@@ -0,0 +1,115 @@
++package study
++
++import (
++	"context"
++	"errors"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"ai_analyze_guokao/internal/store"
++	"golang.org/x/crypto/bcrypt"
++)
++
++// Catches removing the password-hash CAS while adding login metadata. The actual
++// SQLite write lock pauses session insertion after the old hash was verified.
++func TestPersonalLoginPreservesHashCAS(t *testing.T) {
++	db, err := store.Open(filepath.Join(t.TempDir(), "cas.sqlite"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer db.Close()
++	s := &Service{DB: db}
++	ctx := context.Background()
++	u, err := s.Register(ctx, "cas_user", "old-password", "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	newHash, err := bcrypt.GenerateFromPassword([]byte("new-password"), bcrypt.DefaultCost)
++	if err != nil {
++		t.Fatal(err)
++	}
++	tx, err := db.BeginTx(ctx, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer tx.Rollback()
++	result := make(chan error, 1)
++	go func() {
++		_, _, e := s.LoginWithMetadata(ctx, "cas_user", "old-password", LoginMetadata{DeviceLabel: "Chrome / Windows", IP: "203.0.113.42"})
++		result <- e
++	}()
++	deadline := time.Now().Add(5 * time.Second)
++	stable := 0
++	for stable < 3 {
++		if time.Now().After(deadline) {
++			t.Fatal("login did not reach the locked write transaction")
++		}
++		if db.Stats().InUse >= 2 {
++			stable++
++		} else {
++			stable = 0
++		}
++		time.Sleep(5 * time.Millisecond)
++	}
++	if _, err = tx.ExecContext(ctx, `UPDATE app_user SET password_hash=? WHERE id=?`, string(newHash), u.ID); err != nil {
++		t.Fatal(err)
++	}
++	if err = tx.Commit(); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case err = <-result:
++		if !errors.Is(err, ErrCredentials) {
++			t.Fatal("stale password created session", err)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("login did not resume")
++	}
++	var count int
++	if err = db.QueryRow(`SELECT COUNT(*) FROM app_session WHERE user_id=?`, u.ID).Scan(&count); err != nil || count != 0 {
++		t.Fatal("stale session persisted", count, err)
++	}
++	if _, _, err = s.Login(ctx, "cas_user", "new-password"); err != nil {
++		t.Fatal("compatible Login wrapper", err)
++	}
++}
++
++// Catches retaining a token at its exact expiry or returning arbitrary/raw metadata.
++func TestPersonalSessionClockAndControlledMetadata(t *testing.T) {
++	db, err := store.Open(filepath.Join(t.TempDir(), "clock.sqlite"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer db.Close()
++	stamp := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
++	s := &Service{DB: db, Clock: func() time.Time { return stamp }}
++	ctx := context.Background()
++	u, err := s.Register(ctx, "clock_user", "testpassword", "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	token, _, err := s.LoginWithMetadata(ctx, "clock_user", "testpassword", LoginMetadata{DeviceLabel: "<script>raw UA</script>", IP: "::ffff:203.0.113.42"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	page, err := s.Sessions(ctx, u.ID, token, 1)
++	if err != nil || len(page.Items) != 1 {
++		t.Fatal(page, err)
++	}
++	row := page.Items[0]
++	if row.DeviceLabel == nil || *row.DeviceLabel != "信息未知" || row.IPHint == nil || *row.IPHint != "203.0.113.*" || row.CreatedAt == nil || *row.CreatedAt != "2026-10-04T00:00:00Z" || row.ExpiresAt != "2026-10-11T00:00:00Z" {
++		t.Fatal(row)
++	}
++	stamp = stamp.Add(SessionTTL)
++	if _, err = s.Verify(ctx, token); !errors.Is(err, ErrCredentials) {
++		t.Fatal("expired token valid", err)
++	}
++	page, err = s.Sessions(ctx, u.ID, token, 1)
++	if err != nil || page.Total != 0 || len(page.Items) != 0 {
++		t.Fatal("expired session listed", page, err)
++	}
++	if _, err = s.RevokeOthers(ctx, u.ID, token); !errors.Is(err, ErrCredentials) {
++		t.Fatal("expired token allowed revoke", err)
++	}
++}

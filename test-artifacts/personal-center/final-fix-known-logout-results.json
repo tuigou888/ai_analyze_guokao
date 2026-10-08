@@ -1,0 +1,8 @@
+{
+  "checks": [
+    "real other-tab logout notification preserves old A input: save/reload/CSV send no requests; late background401 cannot redirect known-stale page"
+  ],
+  "console_errors": [],
+  "requests": [],
+  "url_after_save": "http://127.0.0.1:18083/account"
+}

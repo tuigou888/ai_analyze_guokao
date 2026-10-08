@@ -8,16 +8,19 @@ import (
 
 // DistillQuestion 是喂给蒸馏管线的一道题（已尽量还原公式与图片文本）。
 type DistillQuestion struct {
-	ID          int64
-	Module      string
-	Tag         string // 数据自带粗标签
-	Stem        string
-	Answer      string
-	AnswerType  string
-	Explanation string
-	HasFigure   bool
-	Options     []DistillOption
-	Occurrences int
+	ID           int64
+	Module       string
+	Tag          string // 数据自带粗标签
+	Stem         string
+	Material     string
+	OccurrenceID int64
+	MaterialID   int64
+	Answer       string
+	AnswerType   string
+	Explanation  string
+	HasFigure    bool
+	Options      []DistillOption
+	Occurrences  int
 }
 
 // DistillOption 一个选项。
@@ -40,13 +43,14 @@ func LoadDistillQuestions(ctx context.Context, db *sql.DB, module string, limit 
 		       COALESCE(NULLIF(q.stem_with_text,''), q.stem, ''),
 		       COALESCE(q.answer,''), q.answer_type,
 		       COALESCE(NULLIF(q.explanation_with_formula,''), q.explanation, ''),
-		       q.has_figure,
+		       MAX(q.has_figure,COALESCE(mat.has_figure,0)),
+		       COALESCE(NULLIF(mat.body_with_text,''),mat.body,''),COALESCE(m.id,0),COALESCE(mat.id,0),
 		       (SELECT COUNT(*) FROM question_occurrence o WHERE o.question_id = q.id)
 		  FROM question q
-		  LEFT JOIN question_occurrence m ON m.question_id = q.id
+		  LEFT JOIN question_occurrence m ON m.id=(SELECT o.id FROM question_occurrence o WHERE o.question_id=q.id ORDER BY (o.material_id IS NOT NULL) DESC,o.id LIMIT 1)
+		  LEFT JOIN material mat ON mat.id=m.material_id
 		 WHERE (? = '' OR q.module = ?)
 		   AND q.answer_type IN ('single','multi','judge')
-		 GROUP BY q.id
 		 ORDER BY q.id`
 	rows, err := db.QueryContext(ctx, q, module, module)
 	if err != nil {
@@ -59,7 +63,7 @@ func LoadDistillQuestions(ctx context.Context, db *sql.DB, module string, limit 
 		var d DistillQuestion
 		var hasFig int
 		if err := rows.Scan(&d.ID, &d.Module, &d.Tag, &d.Stem, &d.Answer, &d.AnswerType,
-			&d.Explanation, &hasFig, &d.Occurrences); err != nil {
+			&d.Explanation, &hasFig, &d.Material, &d.OccurrenceID, &d.MaterialID, &d.Occurrences); err != nil {
 			return nil, err
 		}
 		d.HasFigure = hasFig == 1
@@ -94,7 +98,7 @@ func loadOptions(ctx context.Context, db *sql.DB, qs []DistillQuestion) (map[int
 		args = append(args, q.ID)
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT question_id, label, COALESCE(content,''), is_correct
+		`SELECT question_id, label, COALESCE(NULLIF(content_with_text,''),content,''), is_correct
 		   FROM option WHERE question_id IN (`+strings.Join(ids, ",")+`)
 		  ORDER BY question_id, ord`, args...)
 	if err != nil {

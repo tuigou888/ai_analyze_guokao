@@ -7,7 +7,8 @@ Type=simple
 User=gk
 Group=gk
 WorkingDirectory=/opt/gk
-ExecStart=/opt/gk/gk serve --db /opt/gk/var/db/gk.sqlite --data /opt/gk/data --secret-key-file /opt/gk/var/secret.key --addr 127.0.0.1:8080
+EnvironmentFile=-/opt/gk/var/gk.env
+ExecStart=/opt/gk/gk serve --db /opt/gk/var/db/gk.sqlite --data /opt/gk/data --secret-key-file /opt/gk/var/secret.key --addr 127.0.0.1:8080 --trusted-proxies 127.0.0.1/32,::1/128
 Restart=on-failure
 RestartSec=5
 Environment=GOMAXPROCS=2

@@ -291,8 +291,14 @@ CREATE TABLE concept (
  id INTEGER PRIMARY KEY, name TEXT NOT NULL, module TEXT NOT NULL, secondary TEXT NOT NULL,
  question_count INTEGER NOT NULL DEFAULT 0, UNIQUE(module, name)
 );
-CREATE VIEW latest_label AS SELECT l.* FROM label l
- WHERE l.id = (SELECT MAX(l2.id) FROM label l2 WHERE l2.question_id=l.question_id);
+CREATE VIEW latest_label AS
+SELECT l.*
+FROM label l
+JOIN (
+  SELECT question_id, MAX(id) AS max_id
+  FROM label
+  GROUP BY question_id
+) m ON l.question_id = m.question_id AND l.id = m.max_id;
 CREATE TABLE practice_session (
  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES app_user(id), kind TEXT NOT NULL,
  spec TEXT NOT NULL, question_ids TEXT NOT NULL, started_at TEXT NOT NULL, submitted_at TEXT,
@@ -343,18 +349,59 @@ END;
  INSERT INTO favorite(user_id,question_id,created_at) SELECT user_id,question_id,last_wrong_at FROM wrongbook WHERE source='manual';
  -- 保留 source='auto' 的错题记录在 wrongbook 中。
  `,
+	// v9：选项 OCR 派生文本；保留原始选项用于页面图片显示。
+	`ALTER TABLE option ADD COLUMN content_with_text TEXT;`,
+	// v10：每次有效模型响应记账；历史缺口保留并显式标记。
+	`ALTER TABLE label_run ADD COLUMN legacy_tokens_in INTEGER NOT NULL DEFAULT 0;
+	 ALTER TABLE label_run ADD COLUMN legacy_tokens_out INTEGER NOT NULL DEFAULT 0;
+	 ALTER TABLE label_run ADD COLUMN legacy_cost_usd REAL NOT NULL DEFAULT 0;
+	 ALTER TABLE label_run ADD COLUMN usage_complete INTEGER NOT NULL DEFAULT 1;
+	 ALTER TABLE label_run ADD COLUMN cost_known INTEGER NOT NULL DEFAULT 0;
+	 ALTER TABLE label_run ADD COLUMN input_hash TEXT;
+	 UPDATE label_run SET legacy_tokens_in=MAX(tokens_in,(SELECT COALESCE(SUM(tokens_in),0) FROM label WHERE run_id=label_run.id)),legacy_tokens_out=MAX(tokens_out,(SELECT COALESCE(SUM(tokens_out),0) FROM label WHERE run_id=label_run.id)),legacy_cost_usd=cost_usd,usage_complete=0;
+	 UPDATE label_run SET tokens_in=legacy_tokens_in,tokens_out=legacy_tokens_out,
+	 total=MAX(total,(SELECT COUNT(*) FROM label WHERE run_id=label_run.id)),
+	 ok=(SELECT COUNT(*) FROM label WHERE run_id=label_run.id),failed=MAX(total-(SELECT COUNT(*) FROM label WHERE run_id=label_run.id),0);
+	 UPDATE label_run SET status=CASE WHEN status='running' THEN status WHEN total=ok THEN 'finished' WHEN ok>0 THEN 'partial' ELSE 'failed' END;
+	 CREATE TABLE label_call(
+	 id INTEGER PRIMARY KEY,run_id TEXT NOT NULL REFERENCES label_run(id),question_id INTEGER NOT NULL REFERENCES question(id),
+	 model_config TEXT NOT NULL,model_response TEXT,tokens_in INTEGER NOT NULL,tokens_out INTEGER NOT NULL,cost_usd REAL,usage_known INTEGER NOT NULL,
+	 status TEXT NOT NULL,created_at TEXT NOT NULL);
+	 CREATE INDEX idx_call_run ON label_call(run_id);`,
+	// v11：多端草稿乐观锁，旧练习从 revision=0 开始。
+	`ALTER TABLE practice_session ADD COLUMN draft_revision INTEGER NOT NULL DEFAULT 0;`,
+	// v12：个人资料与公开会话管理；旧凭据和草稿保持原样。
+	`CREATE TABLE user_profile (
+ user_id INTEGER PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+ bio TEXT NOT NULL DEFAULT '', avatar_id INTEGER NOT NULL DEFAULT 0,
+ daily_questions INTEGER NOT NULL DEFAULT 20, daily_minutes INTEGER NOT NULL DEFAULT 30,
+ exam_name TEXT NOT NULL DEFAULT '', exam_date TEXT NOT NULL DEFAULT '',
+ default_limit INTEGER NOT NULL DEFAULT 20, default_module TEXT NOT NULL DEFAULT '',
+ reading_size INTEGER NOT NULL DEFAULT 16, revision INTEGER NOT NULL DEFAULT 0,
+ updated_at TEXT NOT NULL
+);
+INSERT INTO user_profile(user_id,updated_at) SELECT id,created_at FROM app_user;
+ALTER TABLE app_session ADD COLUMN public_id TEXT;
+ALTER TABLE app_session ADD COLUMN created_at TEXT;
+ALTER TABLE app_session ADD COLUMN device_label TEXT;
+ALTER TABLE app_session ADD COLUMN ip_hint TEXT;
+UPDATE app_session SET public_id=lower(hex(randomblob(16)));
+CREATE UNIQUE INDEX idx_app_session_public ON app_session(public_id);
+CREATE INDEX idx_app_session_user ON app_session(user_id,expires_at);
+CREATE INDEX idx_practice_user_submitted ON practice_session(user_id,submitted_at);`,
 }
 
 // Open 打开（必要时创建）数据库并跑迁移。
 func Open(path string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(ON)", url.PathEscape(path))
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(ON)&_txlock=immediate", url.PathEscape(path))
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	// modernc SQLite 在 WAL 模式下允许多个读连接，但写操作仍需串行获取锁。
-	// 将连接池限制在较小规模（5 个）：避免单连接导致全部 HTTP 请求串行阻塞，
-	// 同时防止过多连接触发 SQLITE_BUSY。结合 busy_timeout(10000) 处理偶发写锁冲突。
+	// 写事务使用 BEGIN IMMEDIATE，在读快照前获取写锁以避免 BUSY_SNAPSHOT。
+	// 分析读取需 BeginTx(ctx, &sql.TxOptions{ReadOnly:true})，驱动使用普通 BEGIN，
+	// 避免读取分析持有写锁；普通 Query 也可并发读取。
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(5)
 	if err := db.Ping(); err != nil {

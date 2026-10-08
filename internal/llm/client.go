@@ -39,10 +39,11 @@ type Response struct {
 	Content string
 	// Model 是**回执**里的模型名。它与配置里写的名字不一致时必须告警：
 	// 配置名只能证明我们请求了什么，证明不了实际路由到了什么（§3.7）。
-	Model     string
-	TokensIn  int
-	TokensOut int
-	Latency   time.Duration
+	Model      string
+	TokensIn   int
+	TokensOut  int
+	UsageKnown bool // Both counters were explicitly present and non-negative.
+	Latency    time.Duration
 }
 
 // Error 是带分类的调用错误。分类决定重试策略（§3.5：可重试与不可重试必须分开）。
@@ -140,6 +141,7 @@ func (c *Client) Chat(ctx context.Context, req Request) (*Response, error) {
 	if err != nil {
 		return nil, &Error{StatusCode: resp.StatusCode, Retryable: true, Message: "读取响应失败: " + err.Error()}
 	}
+	var statusErr *Error
 	if resp.StatusCode != http.StatusOK {
 		e := classifyStatus(resp.StatusCode, raw)
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
@@ -147,7 +149,7 @@ func (c *Client) Chat(ctx context.Context, req Request) (*Response, error) {
 				e.RetryAfter = time.Duration(secs) * time.Second
 			}
 		}
-		return nil, e
+		statusErr = e
 	}
 
 	var parsed struct {
@@ -158,33 +160,44 @@ func (c *Client) Chat(ctx context.Context, req Request) (*Response, error) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
+		Usage *struct {
+			PromptTokens     *int `json:"prompt_tokens"`
+			CompletionTokens *int `json:"completion_tokens"`
 		} `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
+		if statusErr != nil {
+			return nil, statusErr
+		}
 		return nil, &Error{StatusCode: resp.StatusCode, Retryable: true,
 			Message: "响应不是合法 JSON（网关返回了 HTML？）: " + snippet(raw)}
 	}
+	result := &Response{Model: parsed.Model, Latency: latency}
+	if parsed.Usage != nil {
+		if p := parsed.Usage.PromptTokens; p != nil {
+			result.TokensIn = max(*p, 0)
+		}
+		if p := parsed.Usage.CompletionTokens; p != nil {
+			result.TokensOut = max(*p, 0)
+		}
+		result.UsageKnown = parsed.Usage.PromptTokens != nil && parsed.Usage.CompletionTokens != nil && *parsed.Usage.PromptTokens >= 0 && *parsed.Usage.CompletionTokens >= 0
+	}
+	if statusErr != nil {
+		return result, statusErr
+	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return nil, &Error{StatusCode: resp.StatusCode, Retryable: false, Message: parsed.Error.Message}
+		return result, &Error{StatusCode: resp.StatusCode, Retryable: false, Message: parsed.Error.Message}
 	}
 	if len(parsed.Choices) == 0 {
 		// 有时是内容被安全策略拦掉，重试一次通常仍失败，但不算致命。
-		return nil, &Error{StatusCode: resp.StatusCode, Retryable: true, Message: "响应中没有 choices"}
+		return result, &Error{StatusCode: resp.StatusCode, Retryable: true, Message: "响应中没有 choices"}
 	}
 
-	return &Response{
-		Content:   parsed.Choices[0].Message.Content,
-		Model:     parsed.Model,
-		TokensIn:  parsed.Usage.PromptTokens,
-		TokensOut: parsed.Usage.CompletionTokens,
-		Latency:   latency,
-	}, nil
+	result.Content = parsed.Choices[0].Message.Content
+	return result, nil
 }
 
 // classifyStatus 把 HTTP 状态码分成可重试与不可重试。

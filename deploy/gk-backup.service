@@ -6,6 +6,7 @@ Type=oneshot
 User=gk
 Group=gk
 WorkingDirectory=/opt/gk
+EnvironmentFile=-/opt/gk/var/gk.env
 ExecStart=/bin/sh /opt/gk/deploy/backup.sh
 UMask=0077
 NoNewPrivileges=true

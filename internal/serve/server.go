@@ -9,9 +9,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -32,9 +35,11 @@ type Server struct {
 	DB       *sql.DB
 	Log      *slog.Logger
 	// Assets 是前端构建产物（web/dist）。未注入时为 nil，根路径给出提示页。
-	Assets  fs.FS
-	Study   *study.Service
-	DataDir string
+	Assets         fs.FS
+	Study          *study.Service
+	DataDir        string
+	TrustedProxies []netip.Prefix
+	PublicOrigin   string
 }
 
 // New 构造服务。
@@ -46,8 +51,8 @@ func New(settings *setting.Store, db *sql.DB, assets fs.FS) *Server {
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Use(sameOrigin)
-	r.Use(newAuthLimiter().middleware)
+	r.Use(s.sameOrigin)
+	r.Use(newAuthLimiter(s.TrustedProxies...).middleware)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.DB.PingContext(r.Context()); err != nil {
 			writeErr(w, 503, "数据库不可用")
@@ -133,7 +138,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/",
-		HttpOnly: true, Secure: secure(r), SameSite: http.SameSiteLaxMode, MaxAge: int(admin.SessionTTL.Seconds()),
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: int(admin.SessionTTL.Seconds()),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"username": in.Username})
 }
@@ -149,7 +154,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "登出失败", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: true, MaxAge: -1})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -228,13 +233,14 @@ func (s *Server) handleTestLLM(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	var in struct {
+		Current  string `json:"current_password"`
 		Password string `json:"password"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	name := r.Header.Get("X-Admin-User")
-	if err := admin.SetPassword(r.Context(), s.DB, name, in.Password); err != nil {
+	if err := admin.ChangePassword(r.Context(), s.DB, name, in.Current, in.Password); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -252,9 +258,19 @@ func isSecretSetting(key string) bool {
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 	defer r.Body.Close()
+	ct, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || ct != "application/json" {
+		writeErr(w, 415, "请求必须使用 application/json")
+		return false
+	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err := dec.Decode(dst); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		return false
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		writeErr(w, 400, "请求体只能包含一个 JSON 对象")
 		return false
 	}
 	return true

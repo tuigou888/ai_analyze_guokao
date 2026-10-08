@@ -1,0 +1,12 @@
+{
+  "checks": [
+    "real delayed A revoke-others success after B login cannot invalidate B identity/profile/preferences or redirect"
+  ],
+  "console_errors": [],
+  "held_status": 200,
+  "url_after_release": "http://127.0.0.1:18083/account",
+  "identity_alerts": 0,
+  "topbar": "BB已确认资料退出",
+  "session_followups": [],
+  "current_cookie_status": 200
+}

@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "file: /bin/sh backup succeeds, validates without source environment, preserves source",
+    "environment_only: /bin/sh backup succeeds, validates without source environment, preserves source",
+    "environment_only: missing effective environment fails without success or partial bundle",
+    "environment_overrides_stale_file: /bin/sh backup succeeds, validates without source environment, preserves source",
+    "environment_overrides_stale_file: missing effective environment fails without success or partial bundle"
+  ]
+}

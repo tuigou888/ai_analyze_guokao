@@ -1,0 +1,91 @@
+{
+  "archive": "var/gk-linux-amd64.tar.gz",
+  "size": 12109319,
+  "sha256": "5ee21b47fd71cc25206e4918e3d51d690aea35a87fa120ec64975cd32d9b2b4b",
+  "file_count": 19,
+  "files": {
+    "README.md": {
+      "size": 8300,
+      "sha256": "aaf11779e606451f802f19ce4ee3678d21c77fbaabab3b0acdd073181228ba33"
+    },
+    "第一轮修复文档.md": {
+      "size": 23521,
+      "sha256": "eb66a25e57efa00b0ee63b7703053ee56ea10711ebfced23b5a19baa9e78819e"
+    },
+    "第二轮修复文档.md": {
+      "size": 7926,
+      "sha256": "644f7b1ea7a5c1870f8b2b6e8cb9d902688480d4b2bc495614a7b7f1fd83baad"
+    },
+    "第二轮上线就绪审查报告.md": {
+      "size": 11171,
+      "sha256": "cceeb6d96fd0dc87598727153a2e3287ff0daa52da3a66393baee35f13f8fb66"
+    },
+    "gk": {
+      "size": 21301980,
+      "sha256": "63360979b38b898e9542beb1fcc8975f557f9148dadec8d6c59d80803e4d019c"
+    },
+    "deploy/gk-backup.service": {
+      "size": 351,
+      "sha256": "e78d795806e9317b67331ee5d3ee98212df89a6d0a24a0245ec7ea692eeaaabc"
+    },
+    "deploy/Caddyfile": {
+      "size": 275,
+      "sha256": "4ab07690df1f60bc71ce509cc19e9da38f407f8220f47e52bc1fc965b8446862"
+    },
+    "deploy/backup.sh": {
+      "size": 410,
+      "sha256": "6440457df757e150f8d020488201da5e5829747070be4102113ee158fbea5944"
+    },
+    "deploy/gk.service": {
+      "size": 664,
+      "sha256": "b95ee2e6e4e1fab798c1f01dc925c480f020bf567ec3dbb39c80b6514bee2977"
+    },
+    "deploy/gk-backup.timer": {
+      "size": 152,
+      "sha256": "0ae0f6d1bcd36fb0b82fe461d1a2ee21f0f83d99b081e484674de932ca6f9b53"
+    },
+    "deploy/gk-distill.service.example": {
+      "size": 939,
+      "sha256": "bd34829d678300ec86a5465f262d2f9763ad354fa84ea9ec725fb055b09e9b09"
+    },
+    "taxonomy/v1/taxonomy.yaml": {
+      "size": 17381,
+      "sha256": "f05acc241af88a6f60011152d1d29e173226fe680162587afea92b2465b2fa79"
+    },
+    "docs/api-design.md": {
+      "size": 14139,
+      "sha256": "b1b289c4ee08566867e1bf7e3402889eb24a2b74551ddb57ab0fd1f31c3a7a3a"
+    },
+    "docs/personal-center-task4-report.md": {
+      "size": 9194,
+      "sha256": "5bb62e8930e28faa238d1fe18b8e1aacae66774deb2aab6b2826b7cff0839824"
+    },
+    "docs/ocr-environment.md": {
+      "size": 4265,
+      "sha256": "b3080076abd2580f1f895e74f96c8487127b641c95b985ccae7280ace7b004a7"
+    },
+    "docs/deployment-2c4g.md": {
+      "size": 30565,
+      "sha256": "4c630c6ae3e26daf57250d4ea27feec1d35f7477fa3065c2de45c614f6197683"
+    },
+    "docs/website-completion.md": {
+      "size": 4146,
+      "sha256": "0bec2d748147768371d9fe9d3f5adf1ed66c86022bd4439264cde48283bcae45"
+    },
+    "docs/personal-center.md": {
+      "size": 6024,
+      "sha256": "6814dbb478ef77f4ceb025015bccedf53c203ac460999090371e4be385aafe5b"
+    },
+    "docs/personal-center-final-fix-report.md": {
+      "size": 8776,
+      "sha256": "8f8f8fb268061de3f7f14bf5fdcab00c0b6bcdf67dc2385340d736c102413f1a"
+    }
+  },
+  "checks": {
+    "allowed_members_only": true,
+    "no_database_key_backup_or_fixture": true,
+    "documents_match_workspace": true,
+    "linux_elf_with_personal_frontend": true
+  },
+  "note": "deploy/backup.sh and backup systemd templates are source configuration, not backup data."
+}

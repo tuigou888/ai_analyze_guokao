@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-06",
+  "status": "original45 passed; final known-stale branch targeted verification pending",
+  "commands": [
+    {
+      "command": "python3 test-artifacts/ui_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+      "exit_code": 0,
+      "checks": 18,
+      "pageerrors": [],
+      "result": "final-fix-old18-results.json"
+    },
+    {
+      "command": "python3 test-artifacts/round2_fixes_ui.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+      "exit_code": 0,
+      "checks": 6,
+      "pageerrors": [],
+      "result": "final-fix-old6-results.json"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite",
+      "exit_code": 0,
+      "checks": 17,
+      "pageerrors": [],
+      "result": "final-fix-personal17-results.json"
+    },
+    {
+      "command": "python3 test-artifacts/personal_center_regression.py http://127.0.0.1:18083 test-artifacts/personal-center/_work/task3.sqlite --profile-ordering",
+      "exit_code": 0,
+      "checks": 4,
+      "pageerrors": [],
+      "result": "final-fix-ordering4-results.json"
+    }
+  ],
+  "checks": 45,
+  "evidence_boundary": "45 verified on stable identity guard / callback / guarded logout version; subsequent only ProfileForm known-stale early rejection and router known-stale401 branch will be verified by final targeted cases + ordering. No changes to ordinary paths."
+}

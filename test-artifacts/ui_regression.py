@@ -10,10 +10,30 @@ db=sqlite3.connect(f'file:{sys.argv[2]}?mode=ro',uri=True)
 out=Path('test-artifacts');out.mkdir(exist_ok=True)
 report={'checks':[],'console_errors':[],'screenshots':[]}
 def check(name):report['checks'].append(name)
+
+class BrowserReply:
+ def __init__(self, value):self.value=value;self.ok=value['ok']
+ def json(self):return json.loads(self.value['text'])
+ def text(self):return self.value['text']
+
+class BrowserAPI:
+ """Use actual browser Origin and Secure-cookie rules, including localhost."""
+ def __init__(self,page):self.page=page
+ def request(self,url,method='GET',data=None):
+  return BrowserReply(self.page.evaluate("""async ({url,method,data}) => {
+   const options={method,credentials:'same-origin',headers:{'Content-Type':'application/json'}};
+   if(data!==null) options.body=JSON.stringify(data);
+   const response=await fetch(url,options);
+   return {ok:response.ok,text:await response.text()};
+  }""",{'url':url,'method':method,'data':data}))
+ def get(self,url):return self.request(url)
+ def post(self,url,data=None):return self.request(url,'POST',data)
+
 with sync_playwright() as pw:
  browser=pw.chromium.launch(executable_path='/usr/bin/google-chrome',headless=True,args=['--no-sandbox'])
  ctx=browser.new_context(viewport={'width':1440,'height':1000},reduced_motion='reduce')
  page=ctx.new_page()
+ browser_api=BrowserAPI(page)
  page.on('pageerror',lambda e:report['console_errors'].append(str(e)))
  page.goto(base+'/')
  expect(page).to_have_url(base+'/login?redirect=/questions')
@@ -31,7 +51,7 @@ with sync_playwright() as pw:
  page.get_by_role('button',name='开始专项练习',exact=True).click()
  expect(page.locator('.question-index button')).to_have_count(50)
  sid=page.url.split('session=')[1]
- s=ctx.request.get(base+'/api/practice/sessions/'+sid).json()
+ s=browser_api.get(base+'/api/practice/sessions/'+sid).json()
  assert len(s['questions'])==50 and 'answer' not in s['questions'][0]
  def choose(q,answer):
   labels={o['label']:o['content'] for o in q['options']}
@@ -52,7 +72,7 @@ with sync_playwright() as pw:
  check('50 consecutive real questions graded on server')
  page.screenshot(path=str(out/'practice-desktop.png'),full_page=True);report['screenshots'].append('practice-desktop.png')
  def session(qids):
-  res=ctx.request.post(base+'/api/practice/sessions',data={'kind':'single','spec':{'question_ids':qids}})
+  res=browser_api.post(base+'/api/practice/sessions',data={'kind':'single','spec':{'question_ids':qids}})
   assert res.ok,res.text();s=res.json();page.goto(base+f'/practice?session={s["session_id"]}');expect(page.locator('.options')).to_be_visible();return s
  s=session([12932]);assert len(s['questions'][0]['options'])==8
  choose(s['questions'][0],'H');page.get_by_role('button',name='提交练习',exact=True).first.click()
@@ -64,7 +84,7 @@ with sync_playwright() as pw:
  page.goto(base+'/wrongbook');expect(page.locator('.question-row')).to_have_count(1)
  page.get_by_role('button',name='开始练习',exact=False).click();expect(page.locator('.options')).to_be_visible();choose({'options':[{'label':'B','content':'错误'}]},'B')
  page.get_by_role('button',name='提交练习',exact=True).first.click();expect(page.locator('.result-status.ok')).to_be_visible()
- page.goto(base+'/wrongbook');expect(page.get_by_role('heading',name='暂无待订正题目')).to_be_visible()
+ page.goto(base+'/wrongbook');expect(page.get_by_role('heading',name='暂无待订正错题')).to_be_visible()
  check('wrongbook auto-insert and correct redo resolves')
  # Formula rendering: use a short restored fraction from the actual question bank.
  formula=db.execute("select id,answer from question where answer_type='single' and explanation_with_formula like '%$%frac%' order by length(explanation_with_formula) limit 1").fetchone()
@@ -91,11 +111,21 @@ with sync_playwright() as pw:
  sid=s['session_id'];choose(s['questions'][0],'H')
  page.locator('.topbar').get_by_role('button',name='退出',exact=True).click();expect(page.get_by_role('heading',name='开始今天的研习')).to_be_visible()
  page.get_by_label('用户名',exact=True).fill(username);page.get_by_label('密码',exact=True).fill('browser-test-password');page.get_by_role('button',name='登录',exact=True).click();expect(page.get_by_role('heading',name='从一道真题开始')).to_be_visible()
- saved=ctx.request.get(base+f'/api/practice/sessions/{sid}').json();assert saved['answers'][0]['answer']=='H'
+ saved=browser_api.get(base+f'/api/practice/sessions/{sid}').json();assert saved['answers'][0]['answer']=='H'
  check('logout saves pending draft before revoking session')
  page.goto(base+'/admin');expect(page.get_by_role('heading',name='管理员登录')).to_be_visible();check('user account cannot enter admin')
  page.get_by_label('用户名',exact=True).fill('webtester');page.get_by_label('密码',exact=True).fill('ui-test-password');page.get_by_role('button',name='登录',exact=True).click();expect(page.get_by_role('heading',name='网站管理')).to_be_visible()
  page.wait_for_load_state('networkidle');assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth');check('independent admin login and 375px settings layout')
+ page.get_by_label('当前密码',exact=True).fill('wrong-current-password')
+ page.get_by_label('新密码',exact=True).fill('ui-test-password-next')
+ page.get_by_role('button',name='修改并重新登录',exact=True).click()
+ expect(page.get_by_text('账号或密码错误',exact=True)).to_be_visible()
+ page.get_by_label('当前密码',exact=True).fill('ui-test-password')
+ page.get_by_role('button',name='修改并重新登录',exact=True).click()
+ expect(page.get_by_role('heading',name='管理员登录')).to_be_visible()
+ page.get_by_label('用户名',exact=True).fill('webtester');page.get_by_label('密码',exact=True).fill('ui-test-password-next')
+ page.get_by_role('button',name='登录',exact=True).click();expect(page.get_by_role('heading',name='网站管理')).to_be_visible()
+ check('admin password rejects wrong current password, revokes session and accepts new password')
  page.goto(base+'/login');page.wait_for_load_state('networkidle');assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
  page.screenshot(path=str(out/'login-mobile.png'),full_page=True);report['screenshots'].append('login-mobile.png')
  browser.close()

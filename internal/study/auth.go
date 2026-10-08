@@ -14,21 +14,27 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"ai_analyze_guokao/internal/store"
 )
 
 var (
-	ErrInvalid     = errors.New("请求参数不合法")
-	ErrCredentials = errors.New("账号或密码错误")
-	ErrConflict    = errors.New("用户名已被使用")
-	ErrNotFound    = errors.New("记录不存在")
-	ErrForbidden   = errors.New("请先作答后查看解析")
+	ErrInvalid       = errors.New("请求参数不合法")
+	ErrCredentials   = errors.New("账号或密码错误")
+	ErrConflict      = errors.New("用户名已被使用")
+	ErrNotFound      = errors.New("记录不存在")
+	ErrForbidden     = errors.New("请先作答后查看解析")
+	ErrDraftConflict = errors.New("练习已在其他窗口更新，请加载最新草稿后再保存或提交")
 )
 
 const SessionTTL = 7 * 24 * time.Hour
 
 var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("constant-timing-placeholder"), bcrypt.DefaultCost)
 
-type Service struct{ DB *sql.DB }
+type Service struct {
+	DB    *sql.DB
+	Clock func() time.Time
+}
 type User struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
@@ -56,17 +62,32 @@ func (s *Service) Register(ctx context.Context, username, password, nickname str
 	if err != nil {
 		return User{}, err
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO app_user(username,password_hash,nickname,created_at) VALUES(?,?,?,?)`, username, string(hash), nickname, now())
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			return User{}, ErrConflict
+	var id int64
+	err = store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
+		created := s.clockNow().UTC().Format(time.RFC3339)
+		res, e := tx.ExecContext(ctx, `INSERT INTO app_user(username,password_hash,nickname,created_at) VALUES(?,?,?,?)`, username, string(hash), nickname, created)
+		if e != nil {
+			if strings.Contains(e.Error(), "UNIQUE") {
+				return ErrConflict
+			}
+			return e
 		}
+		id, e = res.LastInsertId()
+		if e != nil {
+			return e
+		}
+		_, e = tx.ExecContext(ctx, `INSERT INTO user_profile(user_id,updated_at) VALUES(?,?)`, id, created)
+		return e
+	})
+	if err != nil {
 		return User{}, err
 	}
-	id, err := res.LastInsertId()
-	return User{id, username, nickname}, err
+	return User{id, username, nickname}, nil
 }
 func (s *Service) Login(ctx context.Context, username, password string) (string, User, error) {
+	return s.LoginWithMetadata(ctx, username, password, LoginMetadata{})
+}
+func (s *Service) LoginWithMetadata(ctx context.Context, username, password string, metadata LoginMetadata) (string, User, error) {
 	var u User
 	var hash string
 	err := s.DB.QueryRowContext(ctx, `SELECT id,username,nickname,password_hash FROM app_user WHERE username=?`, strings.TrimSpace(username)).Scan(&u.ID, &u.Username, &u.Nickname, &hash)
@@ -85,25 +106,44 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 		return "", u, err
 	}
 	token := hex.EncodeToString(b)
-	tx, err := s.DB.BeginTx(ctx, nil)
+	publicID, err := newPublicID()
 	if err != nil {
 		return "", u, err
 	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `DELETE FROM app_session WHERE expires_at<=?`, now()); err != nil {
-		return "", u, err
+	timestamp := s.clockNow().UTC()
+	var device, ip any
+	if metadata.DeviceLabel != "" {
+		device = controlledDevice(metadata.DeviceLabel)
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO app_session(token,user_id,expires_at) VALUES(?,?,?)`, tokenHash(token), u.ID, time.Now().UTC().Add(SessionTTL).Format(time.RFC3339)); err != nil {
-		return "", u, err
+	if hint := maskIP(metadata.IP); hint != "" {
+		ip = hint
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE app_user SET last_login_at=? WHERE id=?`, now(), u.ID); err != nil {
-		return "", u, err
+	err = store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
+		if _, e := tx.ExecContext(ctx, `DELETE FROM app_session WHERE expires_at<=?`, timestamp.Format(time.RFC3339)); e != nil {
+			return e
+		}
+		res, e := tx.ExecContext(ctx, `INSERT INTO app_session(token,user_id,expires_at,public_id,created_at,device_label,ip_hint) SELECT ?,id,?,?,?,?,? FROM app_user WHERE id=? AND password_hash=?`, tokenHash(token), timestamp.Add(SessionTTL).Format(time.RFC3339), publicID, timestamp.Format(time.RFC3339), device, ip, u.ID, hash)
+		if e != nil {
+			return e
+		}
+		n, e := res.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if n != 1 {
+			return ErrCredentials
+		}
+		_, e = tx.ExecContext(ctx, `UPDATE app_user SET last_login_at=? WHERE id=?`, timestamp.Format(time.RFC3339), u.ID)
+		return e
+	})
+	if err != nil {
+		return "", User{}, err
 	}
-	return token, u, tx.Commit()
+	return token, u, nil
 }
 func (s *Service) Verify(ctx context.Context, token string) (User, error) {
 	var u User
-	err := s.DB.QueryRowContext(ctx, `SELECT u.id,u.username,u.nickname FROM app_session s JOIN app_user u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?`, tokenHash(token), now()).Scan(&u.ID, &u.Username, &u.Nickname)
+	err := s.DB.QueryRowContext(ctx, `SELECT u.id,u.username,u.nickname FROM app_session s JOIN app_user u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?`, tokenHash(token), s.clockNow().UTC().Format(time.RFC3339)).Scan(&u.ID, &u.Username, &u.Nickname)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrCredentials
 	}
@@ -122,7 +162,7 @@ func (s *Service) Password(ctx context.Context, id int64, current, password stri
 		return err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(current)) != nil {
-		return ErrCredentials
+		return errors.Join(ErrInvalid, errors.New("原密码错误"))
 	}
 	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {

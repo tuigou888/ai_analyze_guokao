@@ -1,0 +1,98 @@
+{
+  "started": "2026-10-02",
+  "closed": "2026-10-04",
+  "status": "F01-F08 fixed and verified within stated scope",
+  "deployed": false,
+  "git_committed": false,
+  "checks": {
+    "go_test_all": {
+      "date": "2026-10-04",
+      "command": "GOMAXPROCS=2 go test ./... -count=1",
+      "result": "passed",
+      "tested_packages": 9,
+      "packages_without_test_files": 2
+    },
+    "go_vet": {
+      "date": "2026-10-04",
+      "command": "go vet ./...",
+      "result": "passed"
+    },
+    "go_race": {
+      "date": "2026-10-02",
+      "command": "GOMAXPROCS=2 go test -race ./internal/serve ./internal/store ./internal/setting -count=1",
+      "result": "passed",
+      "scope": "three named packages"
+    },
+    "frontend_and_release": {
+      "date": "2026-10-02",
+      "command": "make release",
+      "result": "passed"
+    },
+    "clean_source_build": {
+      "date": "2026-10-04",
+      "result": "passed",
+      "scope": "generated frontend excluded, only .gitkeep retained"
+    },
+    "platform_builds": {
+      "date": "2026-10-04",
+      "result": "passed",
+      "targets": [
+        "linux/amd64",
+        "windows/amd64",
+        "darwin/arm64"
+      ],
+      "cgo_enabled": false,
+      "windows_macos_native_runtime_tested": false
+    },
+    "http_concurrency": {
+      "date": "2026-10-04",
+      "result": "passed",
+      "users": 20,
+      "repeat_submissions_same_session": 20,
+      "independent_sqlite_pools": 2,
+      "production_capacity_test": false
+    },
+    "baseline_browser": {
+      "date": "2026-10-02",
+      "result": "passed",
+      "count": 18,
+      "console_errors": []
+    },
+    "additional_browser": {
+      "date": "2026-10-02",
+      "result": "passed",
+      "count": 6,
+      "console_errors": []
+    },
+    "backup_script": {
+      "date": "2026-10-04",
+      "result": "passed",
+      "count": 5,
+      "modes": [
+        "file",
+        "environment_only",
+        "environment_overrides_stale_file"
+      ]
+    },
+    "package_contents": {
+      "date": "2026-10-04",
+      "result": "passed",
+      "runtime_database_key_images_included": false,
+      "documents_match_workspace": true,
+      "binary_matches_fresh_build": true
+    }
+  },
+  "artifacts": {
+    "release_archive": "var/gk-linux-amd64.tar.gz",
+    "release_sha256": "b50d330e7da6b9f46171b16d6a7fcc45ee8a725aa0570b1f7394e8d8831357e8",
+    "linux_binary_sha256": "1adaf871b7a0537143f867b25bade02fe4e417eaab0340adfdbb5760acbeac24"
+  },
+  "remaining_acceptance": [
+    "production HTTPS/proxy/cookie",
+    "target server capacity and long history statistics",
+    "off-machine restore and monitoring",
+    "Windows/macOS native execution",
+    "power-failure durability",
+    "product and account operations scope"
+  ]
+}
