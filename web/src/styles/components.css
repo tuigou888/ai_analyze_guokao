@@ -356,7 +356,7 @@ textarea::placeholder {
 }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),select,textarea):focus-visible {
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: var(--focus-ring);
 }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),select,textarea)[aria-invalid="true"] {
@@ -364,7 +364,7 @@ textarea::placeholder {
 }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),select,textarea)[aria-invalid="true"]:focus-visible {
-  box-shadow: 0 0 0 3px var(--focus-ring-danger);
+  box-shadow: var(--focus-ring-danger);
 }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):read-only {
