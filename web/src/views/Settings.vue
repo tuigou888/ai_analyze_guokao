@@ -78,7 +78,7 @@ async function testConn() {
 </script>
 
 <template>
-  <div class="grid">
+  <div class="settings-grid">
     <section class="card">
       <h2>LLM 接口</h2>
       <p class="muted small">模型接口参数保存在服务器，密钥读取时只返回掩码。</p>
@@ -86,14 +86,14 @@ async function testConn() {
       <label>
         <span>API 地址（OpenAI 兼容）</span>
         <input v-model="form['llm.base_url']" class="mono" placeholder="https://example.com/v1" />
-        <em>填到 /v1 为止，客户端会自动拼 /chat/completions</em>
+        <small class="field-hint">填到 /v1 为止，客户端会自动拼 /chat/completions</small>
       </label>
 
       <label>
         <span>API Key</span>
         <input v-model="form['llm.api_key']" type="password" class="mono"
                :placeholder="keyPlaceholder" autocomplete="off" />
-        <em>留空表示不修改；填入新值会覆盖</em>
+        <small class="field-hint">留空表示不修改；填入新值会覆盖</small>
       </label>
 
       <label>
@@ -101,20 +101,20 @@ async function testConn() {
         <input v-model="form['llm.model']" class="mono" placeholder="deepseek-flash" />
       </label>
 
-      <div class="row">
+      <div class="settings-row">
         <label>
           <span>并发数</span>
           <input v-model="form['llm.concurrency']" type="number" min="1" max="32" />
-          <em>2 核 4GB 服务器建议从 1 开始</em>
+          <small class="field-hint">2 核 4GB 服务器建议从 1 开始</small>
         </label>
         <label>
           <span>单请求超时（秒）</span>
           <input v-model="form['llm.timeout_sec']" type="number" min="10" />
-          <em>生成类请求较慢</em>
+          <small class="field-hint">生成类请求较慢</small>
         </label>
       </div>
 
-      <div class="actions">
+      <div class="settings-actions">
         <button class="primary" :disabled="saving || loading" @click="save">
           {{ saving ? '保存中…' : '保存' }}
         </button>
@@ -123,14 +123,14 @@ async function testConn() {
         </button>
       </div>
 
-      <p v-if="notice" :class="['notice', notice.kind]">{{ notice.text }}</p>
+      <p v-if="notice" :class="['notice', 'settings-feedback', notice.kind]">{{ notice.text }}</p>
 
-      <div v-if="testResult" :class="['notice', testResult.ok ? 'ok' : 'err']">
+      <div v-if="testResult" :class="['notice', 'settings-feedback', testResult.ok ? 'ok' : 'err']">
         <template v-if="testResult.ok">
           连接成功，耗时 {{ testResult.latency_ms }} ms<br />
           <span class="mono">配置模型 {{ testResult.model_config }}</span><br />
           <span class="mono">回执模型 {{ testResult.model_response || '(回执未给出)' }}</span>
-          <div v-if="testResult.warning" class="warn-line">{{ testResult.warning }}</div>
+          <div v-if="testResult.warning" class="settings-warning">{{ testResult.warning }}</div>
         </template>
         <template v-else>{{ testResult.error }}</template>
       </div>
@@ -149,12 +149,12 @@ async function testConn() {
       <label>
         <span>每日预算上限（美元）</span>
         <input v-model="form['llm.daily_budget_usd']" type="number" min="0" step="0.01" placeholder="留空不限制" />
-        <em>预算配置项；当前网站不开放实时 AI 请求，此值尚未作为运行时预算闸门执行。</em>
+        <small class="field-hint">预算配置项；当前网站不开放实时 AI 请求，此值尚未作为运行时预算闸门执行。</small>
       </label>
 
-      <hr />
+      <hr class="section-divider" />
       <h3>成本估算参考</h3>
-      <table>
+      <table class="data-table settings-reference-table">
         <tbody>
           <tr><td>单题标注</td><td class="mono">约 3.3k token（含重试，以批次统计为准）</td></tr>
           <tr><td>全量 27,449 题</td><td class="mono">约 30 小时有效跑批，限流与低并发会增加耗时</td></tr>
@@ -166,7 +166,7 @@ async function testConn() {
     <section class="card">
       <h2>接口约定</h2>
       <p class="muted small">当前后端支持的配置键（也可用 <code>gk config set</code> 修改）：</p>
-      <table>
+      <table class="data-table settings-reference-table">
         <tbody>
           <tr><td class="mono">llm.base_url</td><td>OpenAI 兼容地址，含 /v1</td></tr>
           <tr><td class="mono">llm.api_key</td><td>密文存储</td></tr>
@@ -182,40 +182,25 @@ async function testConn() {
 </template>
 
 <style scoped>
-.grid {
-  display: grid; gap: 18px;
+.settings-grid {
+  display: grid;
+  gap: 18px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
-  max-width: 1180px; margin: 0 auto;
+  max-width: 1180px;
+  margin: 0 auto;
 }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
-h2 { margin: 0 0 6px; font-size: 16px; }
-h3 { margin: 0 0 8px; font-size: 14px; }
-.small { font-size: 12.5px; }
-.muted { color: var(--muted); }
-hr { border: none; border-top: 1px solid var(--line); margin: 20px 0; }
-label { display: block; margin-top: 16px; }
-label span { display: block; font-size: 13px; margin-bottom: 6px; }
-label em { display: block; font-size: 12px; color: var(--muted); margin-top: 5px; font-style: normal; }
-input {
-  width: 100%; padding: 9px 12px; background: var(--panel-2); color: var(--text);
-  border: 1px solid var(--line); border-radius: 7px; font-size: 14px;
+.settings-grid label { margin-top: 16px; }
+.settings-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 14px;
 }
-input:focus { outline: none; border-color: var(--accent); }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.actions { display: flex; gap: 10px; margin-top: 20px; }
-button {
-  padding: 9px 18px; border-radius: 7px; font-size: 14px; cursor: pointer; border: 1px solid transparent;
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
 }
-button.primary { background: var(--accent); color: #fff; }
-button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
-button:disabled { opacity: .5; cursor: not-allowed; }
-.notice { margin-top: 16px; padding: 11px 13px; border-radius: 7px; font-size: 13px; line-height: 1.7; }
-.notice.ok { background: rgba(53, 201, 138, .12); border: 1px solid rgba(53, 201, 138, .35); }
-.notice.err { background: rgba(242, 84, 91, .12); border: 1px solid rgba(242, 84, 91, .35); }
-.notice.warn { background: rgba(240, 180, 41, .12); border: 1px solid rgba(240, 180, 41, .35); }
-.warn-line { color: var(--warn); margin-top: 6px; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-td { padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-td:first-child { color: var(--muted); width: 46%; }
-code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+.settings-feedback { margin-top: 16px; }
+.settings-warning { color: var(--warn); margin-top: 6px; }
+.settings-reference-table td:first-child { color: var(--muted); width: 46%; }
 </style>

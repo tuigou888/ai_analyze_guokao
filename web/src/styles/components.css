@@ -41,6 +41,13 @@ button.primary:hover,
   background: #174e94;
 }
 
+button.ghost,
+.button.ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--line);
+}
+
 button.text-button {
   background: none;
   border-color: transparent;
@@ -62,6 +69,14 @@ button.text-button:hover {
   border-radius: var(--radius);
   overflow: hidden;
   margin-bottom: 22px;
+}
+
+.card,
+.pc-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 24px;
 }
 
 .panel-heading {
@@ -94,13 +109,79 @@ button.text-button:hover {
   color: var(--muted);
 }
 
-.tag {
+.tag,
+.pc-tag {
+  display: inline-flex;
+  align-items: center;
   padding: 3px 8px;
   background: var(--accent-soft);
-  color: #285e9f;
+  color: var(--accent);
   border-radius: 4px;
   font-size: 11px;
   white-space: nowrap;
+}
+
+label > span {
+  display: block;
+  font-size: 13px;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+[aria-invalid="true"] + .field-hint {
+  color: var(--err);
+}
+
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 20px 0;
+}
+
+code {
+  background: var(--panel-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  background: var(--panel-2);
+}
+
+.data-table caption {
+  padding: 12px 0;
+  color: var(--muted);
+  text-align: left;
+}
+
+.data-table--compact {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.data-table--compact th,
+.data-table--compact td {
+  padding: 9px 10px;
 }
 
 .pagination {
@@ -228,6 +309,22 @@ textarea {
   font-size: 14px;
   line-height: 1.45;
   transition: border-color .16s ease,box-shadow .16s ease,background-color .16s ease;
+}
+
+textarea {
+  min-height: 108px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+select {
+  appearance: none;
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='m5 7.5 5 5 5-5' stroke='%2358697f' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 13px center;
+  background-repeat: no-repeat;
+  background-size: 16px;
+  cursor: pointer;
 }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]))::placeholder,

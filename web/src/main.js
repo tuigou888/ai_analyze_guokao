@@ -7,4 +7,5 @@ import './styles/base.css'
 import './styles/components.css'
 import './styles/layout.css'
 import './styles/pages.css'
+import './styles/account.css'
 createApp(App).use(router).mount('#app')

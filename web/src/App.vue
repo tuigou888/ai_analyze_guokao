@@ -3,7 +3,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { auth, clearUser } from './auth'
 import { api, forUser } from './api'
 import { ref, watch } from 'vue'
-import './components/account/account.css'
 const route = useRoute(), router = useRouter(), error = ref(''), currentView = ref(null)
 watch(() => route.fullPath, () => { error.value = '' })
 const links = [['/questions','题库练习','题'],['/papers','真题试卷','卷'],['/concepts','考点地图','知'],['/wrongbook','错题本','错'],['/favorites','我的收藏','藏'],['/records','学习记录','记']]
