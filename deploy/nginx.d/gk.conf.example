@@ -1,0 +1,103 @@
+upstream gk_backend {
+    server gk:8080;
+}
+
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+
+# 需要替换 practice.example.com 为实际域名
+# 在服务器上将此文件重命名为 practice.example.com.conf 并填入真实域名和证书路径
+server {
+    listen 443 ssl http2;
+    server_name practice.example.com;
+
+    ssl_certificate /etc/nginx/ssl/practice.example.com.crt;
+    ssl_certificate_key /etc/nginx/ssl/practice.example.com.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    ssl_session_tickets off;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    # 日志
+    access_log /var/log/nginx/gk-access.log;
+    error_log /var/log/nginx/gk-error.log;
+
+    # 静态资源缓存
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        proxy_pass http://gk_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # API 请求
+    location /api/ {
+        proxy_pass http://gk_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        client_max_body_size 50m;
+    }
+
+    # 图片/media 请求
+    location /media/ {
+        proxy_pass http://gk_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        client_max_body_size 50m;
+    }
+
+    # 管理入口
+    location /admin {
+        proxy_pass http://gk_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 健康检查（供反向代理自检）
+    location /healthz {
+        proxy_pass http://gk_backend;
+        proxy_set_header Host $host;
+        proxy_read_timeout 5s;
+    }
+
+    # 根路径：转发给前端
+    location / {
+        proxy_pass http://gk_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 限流：每分钟最多 60 次登录尝试
+    limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
+    location /api/auth/login {
+        limit_req zone=login burst=5 nodelay;
+        limit_req_status 429;
+        proxy_pass http://gk_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

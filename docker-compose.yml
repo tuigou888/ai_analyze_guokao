@@ -1,0 +1,66 @@
+version: "3.9"
+
+services:
+  gk:
+    image: ${IMAGE_NAME:-practice-gk}:${IMAGE_TAG:-latest}
+    container_name: gk
+    restart: unless-stopped
+    volumes:
+      - ./var/db:/opt/gk/var/db
+      - ./var/data:/opt/gk/var/data
+      - ./var/secret.key:/opt/gk/var/secret.key:ro
+      - ./var/logs:/opt/gk/var/logs
+      - ./var/backups:/opt/gk/var/backups
+    ports:
+      - "${GK_HOST_PORT:-8080}:8080"
+      - "${GK_ADMIN_PORT:-8081}:8081"
+    environment:
+      - TZ=Asia/Shanghai
+      - GOMAXPROCS=${GOMAXPROCS:-2}
+      - GOMEMLIMIT=${GOMEMLIMIT:-768MiB}
+      - GK_SECRET_KEY=${GK_SECRET_KEY:-}
+      - GK_ADDR=0.0.0.0:8080
+      - GK_TRUSTED_PROXIES=${GK_TRUSTED_PROXIES:-127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - gk-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backup:
+    image: ${IMAGE_NAME:-practice-gk}:${IMAGE_TAG:-latest}
+    container_name: gk-backup
+    restart: "no"
+    entrypoint: ["/opt/gk/docker-entrypoint.sh"]
+    command:
+      - "backup"
+      - "--bundle"
+      - "/opt/gk/var/backups/gk-$(date +%Y%m%d)-$(date +%H%M%S)"
+    volumes:
+      - ./var/db:/opt/gk/var/db
+      - ./var/secret.key:/opt/gk/var/secret.key:ro
+      - ./var/backups:/opt/gk/var/backups
+    environment:
+      - TZ=Asia/Shanghai
+      - GK_SECRET_KEY=${GK_SECRET_KEY:-}
+    networks:
+      - gk-net
+    depends_on:
+      - gk
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+networks:
+  gk-net:
+    driver: bridge

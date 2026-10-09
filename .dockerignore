@@ -1,0 +1,29 @@
+# Whitelist files that should be included in Docker build
+!go.mod
+!go.sum
+!cmd/gk/
+!web/package.json
+!web/package-lock.json
+!web/src/
+!web/index.html
+!web/vite.config.js
+!taxonomy/
+!docs/
+!deploy/
+!README.md
+!Makefile
+!Dockerfile
+!docker-compose.yml
+!.dockerignore
+!.gitignore
+
+# Blacklist runtime data
+var/
+data/
+web/node_modules/
+web/dist/
+cmd/gk/web_dist/
+test-artifacts/
+*.test
+*.out
+*.tar.gz
