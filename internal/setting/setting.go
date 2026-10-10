@@ -40,6 +40,13 @@ const (
 	// 实测某网关单次成功率约 60%，故默认 4（→ 约 99%）。
 	KeyMaxRetries  = "llm.max_retries"
 	KeyDailyBudget = "llm.daily_budget_usd" // AI 成本闸门（§8.6 约束 6）
+
+	// 邮件服务（注册验证码）。未配置 host/port/from 时走开发降级：验证码只打印日志。
+	KeySMTPHost     = "mail.smtp_host"
+	KeySMTPPort     = "mail.smtp_port"
+	KeySMTPUser     = "mail.smtp_user"
+	KeySMTPPassword = "mail.smtp_password"
+	KeyMailFrom     = "mail.from"
 )
 
 // Mask 是敏感值在读取接口里的占位显示。用固定长度，不泄漏真实长度。
@@ -53,6 +60,10 @@ var Defaults = map[string]string{
 	KeyTimeoutSec:  "180",
 	KeyMaxTokens:   "2500",
 	KeyMaxRetries:  "4",
+	KeySMTPHost:    "",
+	KeySMTPPort:    "",
+	KeySMTPUser:    "",
+	KeyMailFrom:    "",
 }
 
 // Store 读写配置。
@@ -239,7 +250,7 @@ func (s *Store) Set(ctx context.Context, key, value, by string) error {
 
 // isSecretKey 判断某个键是否为敏感值。
 func isSecretKey(key string) bool {
-	return key == KeyAPIKey
+	return key == KeyAPIKey || key == KeySMTPPassword
 }
 
 func (s *Store) encrypt(plain string) ([]byte, error) {
