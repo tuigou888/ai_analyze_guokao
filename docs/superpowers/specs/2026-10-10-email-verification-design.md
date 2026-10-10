@@ -45,7 +45,7 @@ CREATE INDEX idx_email_code_email ON email_code(email, created_at DESC);
 
 - `app_user.email` 默认空串 + 部分唯一索引（`WHERE email != ''`）：存量账号不受影响，新注册邮箱唯一。
 - 验证码存 SHA-256 哈希（与 `app_session.token` 存储策略一致）。
-- `consumed_at` 非空表示已使用，防止验证码复用。
+- `consumed_at` 非空表示已使用，防止验证码复用；发送新验证码时，同一邮箱此前所有未使用记录也标记为 `consumed_at`（作废），保证**每邮箱同时至多一个有效验证码**，注册时无匹配歧义。
 - `attempts` 记录尝试次数，上限 5 次。
 
 ## 4. API 设计
@@ -55,24 +55,28 @@ CREATE INDEX idx_email_code_email ON email_code(email, created_at DESC);
 请求：`{"email": "user@example.com"}`
 响应：`200 {"ok": true}`
 
-逻辑：
-1. 校验邮箱格式（RFC 5322 简化校验）。
-2. 查 `email_code` 表该邮箱最近一条记录，若 `created_at` 在 60 秒内 → 429「发送过于频繁，请稍后再试」。
-3. 生成 6 位数字验证码（`crypto/rand`），SHA-256 哈希后写入 `email_code`（`expires_at` = now + 5min）。
-4. 同步调用 `mail.Send`；未配置 SMTP 时打印日志（开发模式）；发送失败 → 502「验证码发送失败，请稍后重试」。
+逻辑（`study.CreateEmailCode` 写库 + serve 层发送编排）：
+1. 校验邮箱格式：总长 ≤ 254、含单个 `@`、本地部分与域名非空、域名含点号（RFC 5322 简化校验）。
+2. `store.WriteTx` 内查该邮箱最近一条记录，若 `created_at` 在 60 秒内 → 429「发送过于频繁，请稍后再试」；否则作废旧码并插入新记录：生成 6 位数字验证码（`crypto/rand`），SHA-256 哈希入库（`expires_at` = now + 5min），返回 `(id, 明文验证码)`。明文仅存在于内存与邮件正文，不落库。
+3. serve 层加载邮件配置并同步调用 `mail.Send`：
+   - 返回 `ErrNotConfigured`（未配置 SMTP，开发降级）→ 服务端日志打印验证码，返回 200 `{"ok": true}`，保证开发环境流程可走通。
+   - 发送失败 → 删除刚插入的记录（`study.DeleteEmailCode(id)`，避免未送达的码占用 60 秒重发窗口），返回 502「验证码发送失败，请稍后重试」。
+   - 发送成功 → 200 `{"ok": true}`。
 
 ### 4.2 修改 `POST /api/auth/register`
 
 请求增加字段：`{"username", "password", "nickname", "email", "code"}`
 响应不变：`201 {"id", "username", "nickname"}`
 
-逻辑（单事务 `store.WriteTx`）：
-1. 校验邮箱格式。
-2. 校验验证码：`email` 匹配、`consumed_at IS NULL`、`expires_at > now`。
-3. 验证码比对（SHA-256 哈希 + `subtle.ConstantTimeCompare`）；失败则 `attempts++`，达 5 次 → 400「验证码错误次数过多，请重新获取」。
+逻辑（`study.Register` 扩展）：
+1. 校验邮箱格式（同 4.1）。
+2. 取该邮箱当前有效记录（`consumed_at IS NULL` 且最新一条；由 4.1 的作废规则，至多一条）：不存在或已过期 → 400「验证码错误或已过期」。
+3. 验证码比对（SHA-256 哈希 + `subtle.ConstantTimeCompare`）：不匹配 → 单独短事务 `attempts++` 后返回 400「验证码错误或已过期」；`attempts` 达 5 → 400「验证码错误次数过多，请重新获取」。尝试计数必须提交，即使注册未成功。
 4. 校验用户名/密码（复用现有规则）。
-5. 插入 `app_user`（含 email）+ `user_profile` + 更新 `email_code.consumed_at`。
+5. 验证通过后进入建号事务（`store.WriteTx`）：插入 `app_user`（含 email）+ `user_profile` + 标记 `email_code.consumed_at`；任何一步失败（如用户名冲突）整个事务回滚，`consumed_at` 保持 NULL，验证码仍可用。
 6. 邮箱 UNIQUE 冲突 → 409「该邮箱已被注册」。
+
+错误映射：`studyError` 新增 `ErrTooFrequent` → 429；邮件相关 502/开发降级在 email-code handler 内处理，不进 `studyError`。
 
 ### 4.3 限流
 
@@ -80,9 +84,11 @@ CREATE INDEX idx_email_code_email ON email_code(email, created_at DESC);
 
 ## 5. 邮件子系统（`internal/mail` 包）
 
-新建 `internal/mail/mail.go`：
+新建 `internal/mail/mail.go`，纯 SMTP 客户端，不依赖数据库——配置由调用方（serve 层，已持有 `setting.Store`）加载后传入，便于独立测试：
 
 ```go
+package mail
+
 type Config struct {
     Host     string // mail.smtp_host
     Port     string // mail.smtp_port
@@ -91,19 +97,18 @@ type Config struct {
     From     string // mail.from
 }
 
+// Configured 判断是否已配置（host/port/from 非空即视为已配置）。
+func (c Config) Configured() bool
+
 var ErrNotConfigured = errors.New("SMTP 未配置")
 
-type Sender struct { db *sql.DB }
-
-func New(db *sql.DB) *Sender
-func (s *Sender) LoadConfig(ctx context.Context) (Config, error)
-func (s *Sender) Send(ctx context.Context, to, subject, body string) error
+// Send 同步发送纯文本邮件。未配置返回 ErrNotConfigured。
+func Send(ctx context.Context, cfg Config, to, subject, body string) error
 ```
 
-- `LoadConfig` 从 setting 表读取 5 个配置键。
-- `Send` 用标准库 `net/smtp`：Dial → 端口 465 用 TLS 包裹 / 端口 587 STARTTLS → `smtp.PlainAuth` → `Mail`/`Rcpt`/`Data`。
+- `Send` 用标准库 `net/smtp`：端口 465 用 `tls.Dial`（隐式 TLS）；其余端口 `smtp.Dial` + 服务器支持时升级 STARTTLS。`Username` 非空时执行 `smtp.PlainAuth` 认证，拒绝在无 TLS 连接上发送认证。
 - 邮件内容 `text/plain; charset=UTF-8`，主题用 RFC 2047 编码（中文主题）。
-- 未配置 SMTP 返回 `ErrNotConfigured`；serve 层捕获后打印日志（开发模式），生产环境发送失败返回 502。
+- serve 层加载配置（`s.Settings.Get`），未配置时捕获 `ErrNotConfigured` 打印日志（开发降级）；真实发送失败返回 502。
 
 ## 6. 配置设计
 
@@ -118,8 +123,9 @@ func (s *Sender) Send(ctx context.Context, to, subject, body string) error
 | `mail.from` | 发件人地址 | 否 |
 
 - `KeySMTPPassword` 加入 `isSecretKey`（`setting.go:241-243`）。
-- 管理后台设置页新增「邮件服务」区块。
-- 管理后台测试按钮复用 `handleTestLLM` 模式（`server.go:205`），发送测试邮件。
+- 4 个非敏感键以空字符串加入 `Defaults`，保证管理后台设置接口（`All()`）始终返回邮件键。
+- 管理后台设置页（`web/src/views/Settings.vue`）新增「邮件服务」区块，含 SMTP 主机/端口/账号/密码/发件人。
+- 新增 `POST /api/admin/test-mail`（复用 `handleTestLLM` 模式，server.go:205）：管理后台「测试」按钮向指定地址发送测试邮件，验证配置连通性。
 - 默认值全部空字符串（未配置 = 开发模式）。
 
 ## 7. 前端设计
@@ -166,7 +172,7 @@ export async function sendEmailCode(email) {
 
 - `internal/study/email_code_test.go`：验证码生成/校验（过期、尝试次数、consumed_at 防重放）、注册事务（邮箱冲突 409、验证码错误 400、成功创建）。
 - `internal/serve/email_code_test.go`：发送接口限流（60 秒重发、429）、端点路由。
-- `internal/mail/mail_test.go`：`httptest` mock SMTP 服务器验证 `Send`；未配置时返回 `ErrNotConfigured`。
+- `internal/mail/mail_test.go`：`net.Listen` 起本地假 SMTP 服务器验证 `Send`（含 STARTTLS 不可用降级）；未配置时返回 `ErrNotConfigured`。
 - 前端：注册表单交互（倒计时、错误提示），复用 Playwright E2E 模式。
 - 运行：`make test`（`go test ./...`）。
 
@@ -176,12 +182,12 @@ export async function sendEmailCode(email) {
 |---|---|
 | `internal/store/schema.go` | 追加 v13 迁移 |
 | `internal/setting/setting.go` | 新增 5 个配置键 + isSecretKey |
-| `internal/mail/mail.go` | 新建邮件发送包 |
-| `internal/study/auth.go` | 修改 Register（邮箱+验证码校验）；新增 SendEmailCode |
-| `internal/study/email_code.go` | 新建验证码业务逻辑 |
-| `internal/serve/study.go` | 新增 email-code 端点；修改 register 端点 |
+| `internal/mail/mail.go` | 新建纯 SMTP 客户端包（Config + Send） |
+| `internal/study/auth.go` | 修改 Register 签名（增加 email、code 参数与校验） |
+| `internal/study/email_code.go` | 新建验证码业务（CreateEmailCode / DeleteEmailCode / 校验逻辑） |
+| `internal/serve/study.go` | 新增 email-code 端点；修改 register 端点；studyError 增加 ErrTooFrequent→429 |
 | `internal/serve/auth_limit.go` | 限流路径加入 email-code |
-| `internal/serve/server.go` | 测试邮件按钮（可选） |
+| `internal/serve/server.go` | 新增 `POST /api/admin/test-mail` 端点 |
 | `web/src/views/Login.vue` | 注册表单加邮箱+验证码 |
 | `web/src/api.js` | 新增 sendEmailCode |
-| `web/src/views/AdminSettings.vue` | 邮件配置区块 |
+| `web/src/views/Settings.vue` | 邮件服务配置区块 + 测试按钮 |
