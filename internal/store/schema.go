@@ -389,6 +389,20 @@ UPDATE app_session SET public_id=lower(hex(randomblob(16)));
 CREATE UNIQUE INDEX idx_app_session_public ON app_session(public_id);
 CREATE INDEX idx_app_session_user ON app_session(user_id,expires_at);
 CREATE INDEX idx_practice_user_submitted ON practice_session(user_id,submitted_at);`,
+	// v13：注册邮箱绑定与邮件验证码。旧账号 email 为空串，不参与唯一约束。
+	`
+ALTER TABLE app_user ADD COLUMN email TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX idx_app_user_email ON app_user(email) WHERE email != '';
+CREATE TABLE email_code (
+  id INTEGER PRIMARY KEY,
+  email TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_email_code_email ON email_code(email, created_at DESC);`,
 }
 
 // Open 打开（必要时创建）数据库并跑迁移。
