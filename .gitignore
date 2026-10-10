@@ -23,3 +23,7 @@ web/node_modules/
 
 # Personal-center task snapshots and temporary review intermediates
 /test-artifacts/personal-center/_work/
+
+# 隔离工作树与 superpowers SDD 工作区（账本/简报/审查包）
+.worktrees/
+.superpowers/
