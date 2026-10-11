@@ -37,7 +37,11 @@ func TestBackupRestorePreservesPracticeAndMatchedKey(t *testing.T) {
 		t.Fatal(e)
 	}
 	s := &study.Service{DB: db}
-	u, e := s.Register(ctx, "restore_user", "testpassword", "test")
+	_, code, e := s.CreateEmailCode(ctx, "restore_user@test.local")
+	if e != nil {
+		t.Fatal(e)
+	}
+	u, e := s.Register(ctx, "restore_user", "testpassword", "test", "restore_user@test.local", code)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -109,7 +113,11 @@ func TestPersonalBackupBundleRestoresProfileSessionAndCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &study.Service{DB: db}
-	u, err := s.Register(ctx, "personal_restore", "synthetic-password", "原昵称")
+	_, code, err := s.CreateEmailCode(ctx, "personal_restore@test.local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.Register(ctx, "personal_restore", "synthetic-password", "原昵称", "personal_restore@test.local", code)
 	if err != nil {
 		t.Fatal(err)
 	}

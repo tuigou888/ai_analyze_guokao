@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -25,6 +26,7 @@ var (
 	ErrNotFound      = errors.New("记录不存在")
 	ErrForbidden     = errors.New("请先作答后查看解析")
 	ErrDraftConflict = errors.New("练习已在其他窗口更新，请加载最新草稿后再保存或提交")
+	ErrEmailConflict = errors.New("该邮箱已被注册")
 )
 
 const SessionTTL = 7 * 24 * time.Hour
@@ -47,9 +49,10 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(h[:])
 }
 func validPassword(p string) bool { return len(p) >= 8 && len(p) <= 72 }
-func (s *Service) Register(ctx context.Context, username, password, nickname string) (User, error) {
+func (s *Service) Register(ctx context.Context, username, password, nickname, email, code string) (User, error) {
 	username = strings.TrimSpace(username)
 	nickname = strings.TrimSpace(nickname)
+	email = normalizeEmail(email)
 	if utf8.RuneCountInString(username) < 3 || utf8.RuneCountInString(username) > 32 || utf8.RuneCountInString(nickname) > 40 || !validPassword(password) {
 		return User{}, errors.Join(ErrInvalid, errors.New("用户名需 3–32 个字符，密码需 8–72 字节，昵称最多 40 字"))
 	}
@@ -58,15 +61,69 @@ func (s *Service) Register(ctx context.Context, username, password, nickname str
 			return User{}, errors.Join(ErrInvalid, errors.New("用户名仅支持字母、数字、下划线和短横线"))
 		}
 	}
+	if !validEmail(email) {
+		return User{}, errors.Join(ErrInvalid, errors.New("邮箱格式不正确"))
+	}
+	codeHash := tokenHash(code)
+	nowStr := s.clockNow().UTC().Format(time.RFC3339)
+	var codeID int64
+	var codeHashStored string
+	var attempts int
+	err := store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `SELECT id,code_hash,attempts FROM email_code WHERE email=? AND consumed_at IS NULL ORDER BY id DESC LIMIT 1`, email)
+		if err := row.Scan(&codeID, &codeHashStored, &attempts); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errors.Join(ErrInvalid, errors.New("验证码错误或已过期"))
+			}
+			return err
+		}
+		var expiresAt string
+		if err := tx.QueryRowContext(ctx, `SELECT expires_at FROM email_code WHERE id=?`, codeID).Scan(&expiresAt); err != nil {
+			return err
+		}
+		if nowStr >= expiresAt {
+			return errors.Join(ErrInvalid, errors.New("验证码错误或已过期"))
+		}
+		if attempts >= 5 {
+			return errors.Join(ErrInvalid, errors.New("验证码错误次数过多，请重新获取"))
+		}
+		if subtle.ConstantTimeCompare([]byte(codeHash), []byte(codeHashStored)) != 1 {
+			return errWrongCode
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, errWrongCode) {
+			if e := s.bumpAttempts(ctx, codeID); e != nil {
+				return User{}, e
+			}
+			var count int
+			_ = s.DB.QueryRowContext(ctx, `SELECT attempts FROM email_code WHERE id=?`, codeID).Scan(&count)
+			if count >= 5 {
+				return User{}, errors.Join(ErrInvalid, errors.New("验证码错误次数过多，请重新获取"))
+			}
+			return User{}, errors.Join(ErrInvalid, errors.New("验证码错误或已过期"))
+		}
+		return User{}, err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return User{}, err
 	}
 	var id int64
 	err = store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
-		created := s.clockNow().UTC().Format(time.RFC3339)
-		res, e := tx.ExecContext(ctx, `INSERT INTO app_user(username,password_hash,nickname,created_at) VALUES(?,?,?,?)`, username, string(hash), nickname, created)
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_user WHERE email=?`, email).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrEmailConflict
+		}
+		res, e := tx.ExecContext(ctx, `INSERT INTO app_user(username,password_hash,nickname,created_at,email) VALUES(?,?,?,?,?)`, username, string(hash), nickname, nowStr, email)
 		if e != nil {
+			if strings.Contains(e.Error(), "UNIQUE") && strings.Contains(e.Error(), "email") {
+				return ErrEmailConflict
+			}
 			if strings.Contains(e.Error(), "UNIQUE") {
 				return ErrConflict
 			}
@@ -76,13 +133,26 @@ func (s *Service) Register(ctx context.Context, username, password, nickname str
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO user_profile(user_id,updated_at) VALUES(?,?)`, id, created)
+		_, e = tx.ExecContext(ctx, `INSERT INTO user_profile(user_id,updated_at) VALUES(?,?)`, id, nowStr)
+		if e != nil {
+			return e
+		}
+		_, e = tx.ExecContext(ctx, `UPDATE email_code SET consumed_at=? WHERE id=?`, nowStr, codeID)
 		return e
 	})
 	if err != nil {
 		return User{}, err
 	}
 	return User{id, username, nickname}, nil
+}
+
+var errWrongCode = errors.New("wrong code")
+
+func (s *Service) bumpAttempts(ctx context.Context, codeID int64) error {
+	return store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE email_code SET attempts=attempts+1 WHERE id=?`, codeID)
+		return err
+	})
 }
 func (s *Service) Login(ctx context.Context, username, password string) (string, User, error) {
 	return s.LoginWithMetadata(ctx, username, password, LoginMetadata{})

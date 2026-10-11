@@ -13,8 +13,8 @@ import (
 func TestPersonalExpectedIdentityRejectsBeforeEffects(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	account(t, h, "identity_a")
-	bob := account(t, h, "identity_b")
+	account(t, s, "identity_a")
+	bob := account(t, s, "identity_b")
 	wLogin, _ := requestTest(t, h, "POST", "/api/auth/login", `{"username":"identity_b","password":"testpassword"}`, nil)
 	if wLogin.Code != 200 {
 		t.Fatal(wLogin.Body.String())
@@ -112,7 +112,7 @@ func TestPersonalExpectedIdentityRejectsBeforeEffects(t *testing.T) {
 func TestPersonalExpectedIdentityAuthenticationAndOrigin(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "precondition_origin")
+	cookie := account(t, s, "precondition_origin")
 	for _, tc := range []struct {
 		path, origin, expected string
 		authenticated          bool
@@ -147,7 +147,7 @@ func TestPersonalExpectedIdentityAuthenticationAndOrigin(t *testing.T) {
 func TestPersonalGuardedLogoutDoesNotDeleteLaterCookie(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "guarded_logout")
+	cookie := account(t, s, "guarded_logout")
 	r := httptest.NewRequest("POST", "/api/auth/logout", strings.NewReader(`{}`))
 	r.AddCookie(cookie)
 	r.Header.Set("Origin", "http://example.com")
@@ -162,7 +162,7 @@ func TestPersonalGuardedLogoutDoesNotDeleteLaterCookie(t *testing.T) {
 	if w.Code != 401 {
 		t.Fatal("guarded logout token still authenticates", w.Code)
 	}
-	legacy := account(t, h, "legacy_logout")
+	legacy := account(t, s, "legacy_logout")
 	w, _ = requestTest(t, h, "POST", "/api/auth/logout", `{}`, legacy)
 	if w.Code != 200 || len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].MaxAge != -1 {
 		t.Fatal("legacy logout no longer deletes Cookie", w.Code, w.Result().Cookies())

@@ -199,11 +199,13 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Nickname string `json:"nickname"`
+		Email    string `json:"email"`
+		Code     string `json:"code"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	v, e := s.Study.Register(r.Context(), in.Username, in.Password, in.Nickname)
+	v, e := s.Study.Register(r.Context(), in.Username, in.Password, in.Nickname, in.Email, in.Code)
 	if e != nil {
 		s.studyError(w, e)
 		return

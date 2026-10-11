@@ -71,13 +71,20 @@ func requestTest(t *testing.T, h http.Handler, method, path, body string, cookie
 	_ = json.Unmarshal(w.Body.Bytes(), &v)
 	return w, v
 }
-func account(t *testing.T, h http.Handler, name string) *http.Cookie {
+func account(t *testing.T, s *Server, name string) *http.Cookie {
 	t.Helper()
-	w, _ := requestTest(t, h, "POST", "/api/auth/register", fmt.Sprintf(`{"username":%q,"password":"testpassword"}`, name), nil)
+	ctx := context.Background()
+	email := name + "@test.local"
+	id, code, err := s.Study.CreateEmailCode(ctx, email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = id
+	w, _ := requestTest(t, s.Routes(), "POST", "/api/auth/register", fmt.Sprintf(`{"username":%q,"password":"testpassword","nickname":"","email":%q,"code":%q}`, name, email, code), nil)
 	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	w, _ = requestTest(t, h, "POST", "/api/auth/login", fmt.Sprintf(`{"username":%q,"password":"testpassword"}`, name), nil)
+	w, _ = requestTest(t, s.Routes(), "POST", "/api/auth/login", fmt.Sprintf(`{"username":%q,"password":"testpassword"}`, name), nil)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -86,8 +93,8 @@ func account(t *testing.T, h http.Handler, name string) *http.Cookie {
 func TestPracticeSecurityAndGrading(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	alice := account(t, h, "alice")
-	bob := account(t, h, "bob")
+	alice := account(t, s, "alice")
+	bob := account(t, s, "bob")
 	for _, path := range []string{"/api/questions?module=资料分析", "/api/questions/1"} {
 		w, v := requestTest(t, h, "GET", path, "", alice)
 		if w.Code != 200 {
@@ -181,8 +188,8 @@ func assertNoAnswers(t *testing.T, v any) {
 func TestWrongbookIsolationRetryAndSkippedReveal(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	alice := account(t, h, "alice")
-	bob := account(t, h, "bob")
+	alice := account(t, s, "alice")
+	bob := account(t, s, "bob")
 	create := func(ids string) int {
 		w, v := requestTest(t, h, "POST", "/api/practice/sessions", `{"kind":"single","spec":{"question_ids":`+ids+`}}`, alice)
 		if w.Code != 200 {
@@ -225,7 +232,7 @@ func TestWrongbookIsolationRetryAndSkippedReveal(t *testing.T) {
 func TestSearchConceptsAndOrigin(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	alice := account(t, h, "alice")
+	alice := account(t, s, "alice")
 	for _, term := range []string{"增长率", "增长", "增长率\" OR *"} {
 		w, _ := requestTest(t, h, "GET", "/api/questions?q="+url.QueryEscape(term), "", alice)
 		if w.Code != 200 {
@@ -253,7 +260,7 @@ func TestSearchConceptsAndOrigin(t *testing.T) {
 func TestPasswordRevokesSessions(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "alice")
+	cookie := account(t, s, "alice")
 	w, _ := requestTest(t, h, "POST", "/api/auth/password", `{"current_password":"testpassword","password":"newpassword"}`, cookie)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
@@ -277,7 +284,7 @@ func TestGradeShapes(t *testing.T) {
 func TestMediaAuthenticationAndTraversal(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "alice")
+	cookie := account(t, s, "alice")
 	s.DataDir = t.TempDir()
 	root := filepath.Join(s.DataDir, "90-图片", "题目图")
 	if err := os.MkdirAll(root, 0755); err != nil {
