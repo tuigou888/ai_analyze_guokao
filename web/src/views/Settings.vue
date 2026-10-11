@@ -12,6 +12,11 @@ const form = reactive({
   'llm.timeout_sec': '120',
   'llm.daily_budget_usd': '',
   'llm.price_per_1k': '',
+  'mail.smtp_host': '',
+  'mail.smtp_port': '',
+  'mail.smtp_user': '',
+  'mail.smtp_password': '',
+  'mail.from': '',
 })
 
 const loading = ref(true)
@@ -20,10 +25,15 @@ const testing = ref(false)
 const notice = ref(null) // { kind: 'ok'|'err'|'warn', text }
 const testResult = ref(null)
 const keyIsSet = ref(false)
+const mailKeyIsSet = ref(false)
+const mailTestTo = ref('')
+const mailTesting = ref(false)
+const mailTestResult = ref(null)
 
 // 后端把已保存的密钥以掩码返回。提交时必须原样送回，
 // 后端会用「等于掩码就保持原值」的规则避免把它写成字面量掩码。
 const keyPlaceholder = computed(() => (keyIsSet.value ? '已保存（留空或保持不变即可）' : '尚未设置'))
+const mailKeyPlaceholder = computed(() => (mailKeyIsSet.value ? '已保存（留空或保持不变即可）' : '尚未设置'))
 
 async function load() {
   loading.value = true
@@ -35,6 +45,11 @@ async function load() {
       if (k === 'llm.api_key') {
         keyIsSet.value = v === MASK
         form[k] = keyIsSet.value ? MASK : ''
+        continue
+      }
+      if (k === 'mail.smtp_password') {
+        mailKeyIsSet.value = v === MASK
+        form[k] = mailKeyIsSet.value ? MASK : ''
         continue
       }
       form[k] = v
@@ -54,6 +69,7 @@ async function save() {
     const payload = { ...form }
     // 密钥仍是掩码时不要发出去，让后端保持原值。
     if (payload['llm.api_key'] === MASK) delete payload['llm.api_key']
+    if (payload['mail.smtp_password'] === MASK) delete payload['mail.smtp_password']
     await api.saveSettings(payload)
     notice.value = { kind: 'ok', text: '已保存' }
     await load()
@@ -73,6 +89,20 @@ async function testConn() {
     testResult.value = { ok: false, error: e.message }
   } finally {
     testing.value = false
+  }
+}
+
+async function testMail() {
+  if (!mailTestTo.value) return
+  mailTesting.value = true
+  mailTestResult.value = null
+  try {
+    await api.testMail(mailTestTo.value)
+    mailTestResult.value = { ok: true }
+  } catch (e) {
+    mailTestResult.value = { ok: false, error: e.message }
+  } finally {
+    mailTesting.value = false
   }
 }
 </script>
@@ -137,6 +167,54 @@ async function testConn() {
     </section>
 
     <section class="card">
+      <h2>邮件服务（注册验证码）</h2>
+      <p class="muted small">配置 SMTP 后可发送真实邮件验证码；未配置时验证码只打印日志（开发降级）。</p>
+
+      <div class="settings-row">
+        <label>
+          <span>SMTP 主机</span>
+          <input v-model="form['mail.smtp_host']" class="mono" placeholder="smtp.example.com" />
+        </label>
+        <label>
+          <span>SMTP 端口</span>
+          <input v-model="form['mail.smtp_port']" class="mono" placeholder="465" />
+        </label>
+      </div>
+      <label>
+        <span>SMTP 用户名</span>
+        <input v-model="form['mail.smtp_user']" class="mono" placeholder="留空则不认证" />
+      </label>
+      <label>
+        <span>SMTP 密码</span>
+        <input v-model="form['mail.smtp_password']" type="password" class="mono"
+               :placeholder="mailKeyPlaceholder" autocomplete="off" />
+        <small class="field-hint">留空表示不修改；填入新值会覆盖</small>
+      </label>
+      <label>
+        <span>发件人</span>
+        <input v-model="form['mail.from']" class="mono" placeholder="noreply@example.com" />
+      </label>
+
+      <hr class="section-divider" />
+      <h3>发送测试邮件</h3>
+      <div class="settings-row">
+        <label>
+          <span>收件人</span>
+          <input v-model="mailTestTo" type="email" placeholder="you@example.com" />
+        </label>
+      </div>
+      <div class="settings-actions">
+        <button class="ghost" :disabled="mailTesting || !mailTestTo" @click="testMail">
+          {{ mailTesting ? '发送中…' : '发送测试邮件' }}
+        </button>
+      </div>
+      <div v-if="mailTestResult" :class="['notice', 'settings-feedback', mailTestResult.ok ? 'ok' : 'err']">
+        <template v-if="mailTestResult.ok">测试邮件已发送，请检查收件箱。</template>
+        <template v-else>{{ mailTestResult.error }}</template>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>成本与闸门</h2>
       <p class="muted small">
         价格用于批次结束后的花费统计；不填则只记 token 数，不谎报为 0 成本。
@@ -175,6 +253,11 @@ async function testConn() {
           <tr><td class="mono">llm.timeout_sec</td><td>单请求超时</td></tr>
           <tr><td class="mono">llm.price_per_1k</td><td>"输入,输出" 美元/千 token</td></tr>
           <tr><td class="mono">llm.daily_budget_usd</td><td>每日成本上限</td></tr>
+          <tr><td class="mono">mail.smtp_host</td><td>SMTP 服务器地址</td></tr>
+          <tr><td class="mono">mail.smtp_port</td><td>SMTP 端口（465=TLS）</td></tr>
+          <tr><td class="mono">mail.smtp_user</td><td>SMTP 用户名（可选）</td></tr>
+          <tr><td class="mono">mail.smtp_password</td><td>SMTP 密码（密文存储）</td></tr>
+          <tr><td class="mono">mail.from</td><td>发件人地址</td></tr>
         </tbody>
       </table>
     </section>

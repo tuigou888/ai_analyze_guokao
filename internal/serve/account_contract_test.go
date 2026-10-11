@@ -8,7 +8,7 @@ import (
 func TestWrongCurrentPasswordPreservesAuthentication(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "password_user")
+	cookie := account(t, s, "password_user")
 	w, _ := requestTest(t, h, "POST", "/api/auth/password", `{"current_password":"wrong-password","password":"new-test-password"}`, cookie)
 	if w.Code != 400 {
 		t.Fatalf("business validation emitted session-expired status: %d %s", w.Code, w.Body.String())
@@ -26,8 +26,8 @@ func TestWrongCurrentPasswordPreservesAuthentication(t *testing.T) {
 func TestRevealUsesNonemptySubmittedAnswer(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	alice := account(t, h, "reveal_alice")
-	bob := account(t, h, "reveal_bob")
+	alice := account(t, s, "reveal_alice")
+	bob := account(t, s, "reveal_bob")
 	_, v := requestTest(t, h, "POST", "/api/practice/sessions", `{"kind":"single","spec":{"question_ids":[1,2]}}`, alice)
 	path := fmt.Sprintf("/api/practice/sessions/%d", int(v["session_id"].(float64)))
 	w, _ := requestTest(t, h, "PUT", path+"/answers", `{"draft_revision":0,"answers":[{"question_id":1,"answer":"A"}]}`, alice)

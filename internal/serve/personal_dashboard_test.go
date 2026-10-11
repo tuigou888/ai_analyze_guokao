@@ -64,7 +64,7 @@ func TestPersonalDashboardHTTPFixedClock(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
 	h := s.Routes()
-	alice, bob := account(t, h, "dashboard_alice"), account(t, h, "dashboard_bob")
+	alice, bob := account(t, s, "dashboard_alice"), account(t, s, "dashboard_bob")
 	historySession(t, db, 1, "2026-10-03T15:59:59Z", 1000, []string{"H", "B", ""}, []int{1, 0, 1})
 	historySession(t, db, 1, "2026-10-03T16:00:00Z", 2000, []string{"H", "AC"}, []int{1, 1})
 	historySession(t, db, 1, "2026-09-27T16:00:00Z", 3000, []string{"B"}, []int{0})
@@ -145,9 +145,9 @@ func TestPersonalDashboardHTTPFixedClock(t *testing.T) {
 func TestPersonalDashboardLatestLabelsAndResume(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-	h := s.Routes()
-	account(t, h, "labels_alice")
-	account(t, h, "labels_bob")
+	_ = s.Routes()
+	account(t, s, "labels_alice")
+	account(t, s, "labels_bob")
 	for i := 0; i < 5; i++ {
 		historySession(t, db, 1, "2026-10-03T16:00:00Z", 100, []string{"H", "A"}, []int{1, 0})
 	}
@@ -200,7 +200,7 @@ func TestPersonalDashboardLatestLabelsAndResume(t *testing.T) {
 func TestPersonalReviewSessionCompatibility(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-	account(t, s.Routes(), "review_compatibility")
+	account(t, s, "review_compatibility")
 	if _, err := db.Exec(`INSERT INTO wrongbook VALUES(1,1,'auto',3,'2026-10-04T00:00:00Z',0)`); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestPersonalReviewSessionCompatibility(t *testing.T) {
 func TestPersonalDashboardEmptyAndAllHistoryStreak(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-	account(t, s.Routes(), "empty_history")
+	account(t, s, "empty_history")
 	out, err := s.Study.Dashboard(context.Background(), 1, 30)
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +275,7 @@ func TestPersonalDashboardEmptyAndAllHistoryStreak(t *testing.T) {
 func TestPersonalDashboardAchievementThresholds(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-	account(t, s.Routes(), "achievement_user")
+	account(t, s, "achievement_user")
 	names := []string{"政治理论", "常识判断", "言语理解与表达", "数量关系", "判断推理", "资料分析"}
 	for i, name := range names {
 		if _, err := db.Exec(`INSERT INTO question(id,content_hash,module,stem,answer,answer_type) VALUES(?, ?,?,'成就合成题','A','single')`, 10+i, fmt.Sprint(10+i), name); err != nil {
@@ -327,7 +327,7 @@ func TestPersonalExportLimitAndDates(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
 	h := s.Routes()
-	cookie := account(t, h, "export_limit")
+	cookie := account(t, s, "export_limit")
 	seedExportHistory(t, db, 5000)
 	ts := httptest.NewServer(h)
 	defer ts.Close()
@@ -368,8 +368,8 @@ func TestPersonalExportLimitAndDates(t *testing.T) {
 func TestPersonalDashboardConcurrentHistoryAndCancellation(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-	account(t, s.Routes(), "concurrent_analysis")
-	account(t, s.Routes(), "concurrent_other")
+	account(t, s, "concurrent_analysis")
+	account(t, s, "concurrent_other")
 	// Holding a write transaction must not block a dashboard read snapshot.
 	writer, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -442,8 +442,8 @@ func TestPersonalExportAndReviewHTTP(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
 	h := s.Routes()
-	alice := account(t, h, "export_alice")
-	account(t, h, "export_bob")
+	alice := account(t, s, "export_alice")
+	account(t, s, "export_bob")
 	historySession(t, db, 1, "2026-10-03T16:00:00Z", 100, []string{"=SUM(1,2)\n\"中文\"", ""}, []int{0, 0})
 	historySession(t, db, 2, "2026-10-03T16:00:00Z", 100, []string{"BOB_PRIVATE"}, []int{0})
 	historySession(t, db, 1, nil, 100, []string{"DRAFT_PRIVATE"}, []int{0})
@@ -489,7 +489,7 @@ func TestPersonalExportAndReviewHTTP(t *testing.T) {
 func TestPersonalDashboardWindowBoundaries(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-	account(t, s.Routes(), "window_boundaries")
+	account(t, s, "window_boundaries")
 	for _, date := range []string{"2026-10-04", "2026-09-28", "2026-09-27", "2026-09-21", "2026-09-20", "2026-09-05", "2026-09-04", "2026-08-06", "2026-08-05", "2026-07-07", "2026-07-06", "2026-04-08", "2026-04-07", "2026-10-05"} {
 		historySession(t, db, 1, date+"T00:00:00+08:00", 100, []string{"H"}, []int{1})
 	}
@@ -507,8 +507,8 @@ func TestPersonalDashboardWindowBoundaries(t *testing.T) {
 func TestPersonalReviewMaxTwentyAndSecurity(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "review_cap")
-	other := account(t, h, "review_cap_other")
+	cookie := account(t, s, "review_cap")
+	other := account(t, s, "review_cap_other")
 	for i := 10; i < 35; i++ {
 		if _, err := db.Exec(`INSERT INTO question(id,content_hash,module,stem,answer,answer_type) VALUES(?,?,'资料分析','错题合成题','A','single')`, i, fmt.Sprint(i)); err != nil {
 			t.Fatal(err)
@@ -562,7 +562,7 @@ func TestPersonalReviewMaxTwentyAndSecurity(t *testing.T) {
 func TestPersonalWeakSuggestionsSampleThresholdAndLimit(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-	account(t, s.Routes(), "weak_samples")
+	account(t, s, "weak_samples")
 	names := []string{"政治理论", "常识判断", "言语理解与表达", "数量关系", "判断推理", "资料分析", "未来模块"}
 	for i, name := range names {
 		if _, err := db.Exec(`INSERT INTO question(id,content_hash,module,stem,answer,answer_type) VALUES(?, ?,?,'样本合成题','A','single')`, 10+i, fmt.Sprint(10+i), name); err != nil {
@@ -626,7 +626,7 @@ func TestPersonalReviewNullModuleCompatibility(t *testing.T) {
 	s, db := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
 	h := s.Routes()
-	alice, bob := account(t, h, "nullable_module_alice"), account(t, h, "nullable_module_bob")
+	alice, bob := account(t, s, "nullable_module_alice"), account(t, s, "nullable_module_bob")
 	if _, err := db.Exec(`UPDATE question SET module=NULL WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
@@ -695,7 +695,7 @@ func TestPersonalReviewUnmappedEmptyTertiary(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			s, db := fixture(t)
 			s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC) }
-			account(t, s.Routes(), "unmapped_empty")
+			account(t, s, "unmapped_empty")
 			if _, err := db.Exec(`UPDATE label SET tertiary=? WHERE question_id=1`, test.tertiary); err != nil {
 				t.Fatal(err)
 			}

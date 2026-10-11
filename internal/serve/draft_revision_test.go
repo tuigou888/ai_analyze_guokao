@@ -9,7 +9,7 @@ import (
 func TestDraftRejectsStaleSnapshotAndSubmission(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "draft_user")
+	cookie := account(t, s, "draft_user")
 	w, v := requestTest(t, h, "POST", "/api/practice/sessions", `{"kind":"single","spec":{"question_ids":[1,2]}}`, cookie)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
@@ -68,7 +68,7 @@ func TestDraftRejectsStaleSnapshotAndSubmission(t *testing.T) {
 func TestConcurrentDraftCAS(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "cas_user")
+	cookie := account(t, s, "cas_user")
 	_, v := requestTest(t, h, "POST", "/api/practice/sessions", `{"kind":"single","spec":{"question_ids":[1]}}`, cookie)
 	path := fmt.Sprintf("/api/practice/sessions/%d", int(v["session_id"].(float64)))
 	start := make(chan struct{})

@@ -21,7 +21,11 @@ func TestPersonalLoginPreservesHashCAS(t *testing.T) {
 	defer db.Close()
 	s := &Service{DB: db}
 	ctx := context.Background()
-	u, err := s.Register(ctx, "cas_user", "old-password", "")
+	_, code, err := s.CreateEmailCode(ctx, "cas_user@test.local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.Register(ctx, "cas_user", "old-password", "", "cas_user@test.local", code)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +89,11 @@ func TestPersonalSessionClockAndControlledMetadata(t *testing.T) {
 	stamp := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
 	s := &Service{DB: db, Clock: func() time.Time { return stamp }}
 	ctx := context.Background()
-	u, err := s.Register(ctx, "clock_user", "testpassword", "")
+	_, code, err := s.CreateEmailCode(ctx, "clock_user@test.local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.Register(ctx, "clock_user", "testpassword", "", "clock_user@test.local", code)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,8 +30,8 @@ func profileBody(t *testing.T, changes map[string]any) string {
 func TestPersonalProfileDefaultsUpdateCAS(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	alice := account(t, h, "profile_alice")
-	bob := account(t, h, "profile_bob")
+	alice := account(t, s, "profile_alice")
+	bob := account(t, s, "profile_bob")
 	var oldHash, oldToken string
 	if err := db.QueryRow(`SELECT u.password_hash,s.token FROM app_user u JOIN app_session s ON s.user_id=u.id WHERE u.id=1`).Scan(&oldHash, &oldToken); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestPersonalProfileDefaultsUpdateCAS(t *testing.T) {
 func TestPersonalProfileRejectsInvalidAndUnauthorized(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "profile_validation")
+	cookie := account(t, s, "profile_validation")
 	for _, change := range []map[string]any{{"avatar_id": 8}, {"avatar_id": -1}, {"reading_size": 17}, {"default_limit": 30}, {"daily_questions": 4}, {"daily_questions": 201}, {"daily_minutes": 4}, {"daily_minutes": 181}, {"default_module": "不存在"}, {"bio": strings.Repeat("字", 201)}, {"nickname": strings.Repeat("字", 41)}, {"exam_name": strings.Repeat("字", 41)}, {"exam_date": "2020-01-01"}, {"exam_date": "2099-01-01"}, {"exam_date": "2026-02-30"}, {"revision": -1}, {"revision": nil}, {"user_id": 2}, {"username": "other"}} {
 		w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, change), cookie)
 		if w.Code != 400 {
@@ -115,8 +115,8 @@ func TestPersonalProfileRejectsInvalidAndUnauthorized(t *testing.T) {
 func TestPersonalSessionsIsolationAndRevocation(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	alice := account(t, h, "session_alice")
-	bob := account(t, h, "session_bob")
+	alice := account(t, s, "session_alice")
+	bob := account(t, s, "session_bob")
 	w, _ := requestTest(t, h, "POST", "/api/auth/login", `{"username":"session_alice","password":"testpassword"}`, nil)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
@@ -189,7 +189,7 @@ func TestPersonalSessionsIsolationAndRevocation(t *testing.T) {
 func TestPersonalLoginMetadata(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	account(t, h, "metadata_user")
+	account(t, s, "metadata_user")
 	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"metadata_user","password":"testpassword"}`))
 	r.RemoteAddr = "203.0.113.42:1234"
 	r.Header.Set("Origin", "http://example.com")
@@ -224,7 +224,7 @@ func TestPersonalLoginMetadata(t *testing.T) {
 func TestPersonalProfileRequiresCompleteEditableFields(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "complete_profile")
+	cookie := account(t, s, "complete_profile")
 	var input map[string]any
 	if err := json.Unmarshal([]byte(profileBody(t, nil)), &input); err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestPersonalProfileRequiresCompleteEditableFields(t *testing.T) {
 func TestPersonalProfileConcurrentCAS(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "concurrent_profile")
+	cookie := account(t, s, "concurrent_profile")
 	var wg sync.WaitGroup
 	codes := make(chan int, 2)
 	for _, nickname := range []string{"窗口甲", "窗口乙"} {
@@ -291,7 +291,7 @@ func TestPersonalProfileConcurrentCAS(t *testing.T) {
 func TestPersonalProfileWriteAtomicity(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "atomic_profile")
+	cookie := account(t, s, "atomic_profile")
 	if _, err := db.Exec(`CREATE TRIGGER fail_nickname BEFORE UPDATE OF nickname ON app_user BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestPersonalProfileWriteAtomicity(t *testing.T) {
 	if _, err := db.Exec(`CREATE TRIGGER fail_profile BEFORE INSERT ON user_profile BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.Study.Register(context.Background(), "failed_registration", "testpassword", "")
+	_, err := s.Study.Register(context.Background(), "failed_registration", "testpassword", "", "failed_reg@test.local", "000000")
 	if err == nil {
 		t.Fatal("failure ignored")
 	}
@@ -322,7 +322,7 @@ func TestPersonalProfileDateAndUnicodeBoundaries(t *testing.T) {
 	s, _ := fixture(t)
 	s.Study.Clock = func() time.Time { return time.Date(2026, 10, 4, 16, 30, 0, 0, time.UTC) }
 	h := s.Routes()
-	cookie := account(t, h, "boundary_profile")
+	cookie := account(t, s, "boundary_profile")
 	for _, date := range []string{"2026-10-04", "2026-10-05", "2031-10-06"} {
 		w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": date}), cookie)
 		if w.Code != 400 {
@@ -339,7 +339,7 @@ func TestPersonalProfileDateAndUnicodeBoundaries(t *testing.T) {
 func TestPersonalSessionWriteRequestSecurity(t *testing.T) {
 	s, _ := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "session_security")
+	cookie := account(t, s, "session_security")
 	for _, check := range []struct {
 		method, path, origin, ct string
 		want                     int
@@ -365,8 +365,8 @@ func TestPersonalSessionWriteRequestSecurity(t *testing.T) {
 func TestPersonalSessionsPaginationLegacyAndExpiry(t *testing.T) {
 	s, db := fixture(t)
 	h := s.Routes()
-	cookie := account(t, h, "paged_sessions")
-	account(t, h, "other_sessions")
+	cookie := account(t, s, "paged_sessions")
+	account(t, s, "other_sessions")
 	for i := 0; i < 21; i++ {
 		id := fmt.Sprintf("synthetic-public-%02d", i)
 		token := fmt.Sprintf("synthetic-hash-%02d", i)
@@ -408,7 +408,7 @@ func TestPersonalLoginMetadataTrustedIPv6(t *testing.T) {
 	s, _ := fixture(t)
 	s.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	h := s.Routes()
-	account(t, h, "ipv6_metadata")
+	account(t, s, "ipv6_metadata")
 	r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"ipv6_metadata","password":"testpassword"}`))
 	r.RemoteAddr = "10.0.0.2:1234"
 	r.Header.Set("Origin", "http://example.com")
@@ -440,8 +440,8 @@ func TestPersonalProfilePreservesOwnExpiredExamDate(t *testing.T) {
 	stamp := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
 	s.Study.Clock = func() time.Time { return stamp }
 	h := s.Routes()
-	alice := account(t, h, "exam_alice")
-	bob := account(t, h, "exam_bob")
+	alice := account(t, s, "exam_alice")
+	bob := account(t, s, "exam_bob")
 	w, _ := requestTest(t, h, "PUT", "/api/account/profile", profileBody(t, map[string]any{"exam_date": "2026-10-05"}), alice)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
