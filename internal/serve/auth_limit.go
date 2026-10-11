@@ -67,7 +67,7 @@ func clientIP(r *http.Request, prefixes []netip.Prefix) string {
 func (l *authLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if p != "/api/auth/login" && p != "/api/auth/register" && p != "/api/admin/login" {
+		if p != "/api/auth/login" && p != "/api/auth/register" && p != "/api/admin/login" && p != "/api/auth/email-code" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -82,10 +82,15 @@ func (l *authLimiter) middleware(next http.Handler) http.Handler {
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 			var in struct {
 				Username string `json:"username"`
+				Email    string `json:"email"`
 			}
 			if json.Unmarshal(raw, &in) == nil {
 				if name := strings.TrimSpace(in.Username); name != "" {
 					digest := sha256.Sum256([]byte(name))
+					keys = append(keys, "account:"+p+":"+hex.EncodeToString(digest[:]))
+				}
+				if email := strings.TrimSpace(strings.ToLower(in.Email)); email != "" {
+					digest := sha256.Sum256([]byte(email))
 					keys = append(keys, "account:"+p+":"+hex.EncodeToString(digest[:]))
 				}
 			}

@@ -76,6 +76,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/admin/settings", s.handleGetSettings)
 			r.Put("/admin/settings", s.handlePutSettings)
 			r.Post("/admin/test-llm", s.handleTestLLM)
+			r.Post("/admin/test-mail", s.handleTestMail)
 			r.Post("/admin/password", s.handleChangePassword)
 		})
 	})

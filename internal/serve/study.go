@@ -47,6 +47,11 @@ func (s *Server) studyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrWriteBusy):
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, study.ErrTooFrequent):
+		w.Header().Set("Retry-After", "60")
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, study.ErrEmailConflict):
+		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, study.ErrInvalid):
 		writeErr(w, 400, err.Error())
 	case errors.Is(err, study.ErrCredentials):
@@ -71,6 +76,7 @@ func (s *Server) respond(w http.ResponseWriter, v any, err error) {
 func pathID(r *http.Request) int64        { v, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64); return v }
 func num(r *http.Request, key string) int { v, _ := strconv.Atoi(r.URL.Query().Get(key)); return v }
 func (s *Server) userRoutes(r chi.Router) {
+	r.Post("/auth/email-code", s.emailCode)
 	r.Post("/auth/register", s.register)
 	r.Post("/auth/login", s.userLogin)
 	r.Post("/auth/logout", s.userLogout)
