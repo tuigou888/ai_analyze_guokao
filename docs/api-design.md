@@ -10,13 +10,14 @@
 
 | 方法 | 路径 | 请求 / 响应 |
 |---|---|---|
-| POST | `/auth/register` | `{username,password,nickname?}` → 201 `{id,username,nickname}`；注册不自动签发会话 |
+| POST | `/auth/register` | `{username,password,nickname?,email,code}` → 201 `{id,username,nickname}`；注册不自动签发会话 |
+| POST | `/auth/email-code` | `{email}` → 200 `{ok:true}`；60s 窗口重复 429；SMTP 未配置时开发降级（只打日志）；验证码哈希入库 |
 | POST | `/auth/login` | `{username,password}` → 用户资料 + Cookie |
 | POST | `/auth/logout` | 撤销当前会话 |
 | GET | `/auth/me` | 当前用户资料；未登录 401 |
 | POST | `/auth/password` | `{current_password,password}`；改密后撤销所有旧会话 |
 
-用户名 3–32 字符，只支持字母、数字、`_`、`-`；密码 8–72 字节；昵称最多 40 字。用户名冲突 409。登录失败统一 401。登录、注册、管理员登录每来源每分钟最多 30 次，密码计算最多 2 个并行任务，超过返回 429。
+用户名 3–32 字符，只支持字母、数字、`_`、`-`；密码 8–72 字节；昵称最多 40 字。用户名冲突 409，邮箱已被注册 409。登录失败统一 401。验证码错误/过期 400；尝试 5 次后锁定需重发。登录、注册、管理员登录、发码每来源每分钟最多 30 次，密码计算最多 2 个并行任务，超过返回 429。
 
 ## 个人中心（v12，需要普通用户 Cookie）
 
@@ -110,7 +111,7 @@ CSV 每行：提交时间、练习类型、练习 ID、题号、模块、本人�
 
 ## 管理与运维
 
-原有 `/admin/login,logout,me,settings,password,test-llm` 保留。`POST /admin/password` 要求 `{current_password,password}`，原密码验证后事务内更新并撤销会话。新增 `POST /admin/concepts/refresh`：只聚合已有标注，不调用模型；用户改密不授予管理权限。写请求必须携带完整同源 Origin 及 application/json。
+原有 `/admin/login,logout,me,settings,password,test-llm,test-mail` 保留。`POST /admin/password` 要求 `{current_password,password}`，原密码验证后事务内更新并撤销会话。新增 `POST /admin/concepts/refresh`：只聚合已有标注，不调用模型；`POST /admin/test-mail` 要求 `{to}`，用当前 SMTP 配置发送测试邮件，未配置 400。用户改密不授予管理权限。写请求必须携带完整同源 Origin 及 application/json。
 
 `GET /healthz` 无需登录，检查数据库连接，正常 200 `{"ok":true}`，失败 503。
 
