@@ -6,11 +6,7 @@ services:
     container_name: gk
     restart: unless-stopped
     volumes:
-      - ./var/db:/opt/gk/var/db
-      - ./var/data:/opt/gk/var/data
-      - ./var/secret.key:/opt/gk/var/secret.key:ro
-      - ./var/logs:/opt/gk/var/logs
-      - ./var/backups:/opt/gk/var/backups
+      - ./var:/opt/gk/var
     ports:
       - "127.0.0.1:${GK_HOST_PORT:-8080}:8080"
     environment:
@@ -52,9 +48,7 @@ services:
         --secret-key-file /opt/gk/var/secret.key
         --bundle /opt/gk/var/backups/gk-$$(date +%Y%m%d-%H%M%S)
     volumes:
-      - ./var/db:/opt/gk/var/db
-      - ./var/secret.key:/opt/gk/var/secret.key:ro
-      - ./var/backups:/opt/gk/var/backups
+      - ./var:/opt/gk/var
     environment:
       - TZ=Asia/Shanghai
       - GK_SECRET_KEY=${GK_SECRET_KEY:-}
