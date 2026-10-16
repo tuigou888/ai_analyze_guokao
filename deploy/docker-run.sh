@@ -10,7 +10,7 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 case "$ACTION" in
   start)
     docker compose up -d --wait
-    echo "服务已启动，访问 http://$(hostname -I | awk '{print $1}'):8080 或 https://your-domain"
+    echo "服务已启动：容器端口仅绑定 127.0.0.1，请通过宿主机反代访问（端口见 .env 的 GK_HOST_PORT）"
     ;;
   stop)
     docker compose down
