@@ -143,7 +143,7 @@ func TestRegisterWithEmailCode(t *testing.T) {
 
 	// 2. 错误码：ErrInvalid，文案「验证码错误或已过期」；attempts==1。
 	//    先为 err@a.co 发码，再用错码注册。
-	mustCode("err@a.co")
+	_, errCode := mustCode("err@a.co")
 	if _, err = s.Register(ctx, "err_user", "testpassword", "", "err@a.co", "000000"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("expected ErrInvalid got %v", err)
 	}
@@ -163,7 +163,7 @@ func TestRegisterWithEmailCode(t *testing.T) {
 		t.Fatal("expected 5-attempts error", err)
 	}
 	// 正确码也拒绝。
-	if _, err = s.Register(ctx, "err_user_ok", "testpassword", "", "err@a.co", code); err == nil || !strings.Contains(err.Error(), "验证码错误次数过多") {
+	if _, err = s.Register(ctx, "err_user_ok", "testpassword", "", "err@a.co", errCode); err == nil || !strings.Contains(err.Error(), "验证码错误次数过多") {
 		t.Fatal("correct code after 5 failures accepted", err)
 	}
 
@@ -198,9 +198,25 @@ func TestRegisterWithEmailCode(t *testing.T) {
 		t.Fatalf("expected ErrEmailConflict: %v", err)
 	}
 
-	// 6. 过期码：stamp 推进 6 分钟 → 「验证码错误或已过期」。
-	stamp = stamp.Add(7 * time.Minute)
-	if _, err = s.Register(ctx, "expired_user", "testpassword", "", "a@b.co", code); err == nil || !errors.Is(err, ErrInvalid) {
-		t.Fatalf("expected invalid after expiry: %v", err)
+	// 6. 过期码：发码后 stamp 推进 6 分钟 → 「验证码错误或已过期」。
+	_, expCode := mustCode("expired@a.co")
+	stamp = stamp.Add(6 * time.Minute)
+	if _, err = s.Register(ctx, "expired_user", "testpassword", "", "expired@a.co", expCode); err == nil || !strings.Contains(err.Error(), "验证码错误或已过期") {
+		t.Fatalf("expected expired-code rejection: %v", err)
+	}
+
+	// 7. 从未发码的邮箱 → 「验证码错误或已过期」。
+	if _, err = s.Register(ctx, "never_user", "testpassword", "", "never@a.co", "123456"); err == nil || !strings.Contains(err.Error(), "验证码错误或已过期") {
+		t.Fatalf("expected rejection for never-sent email: %v", err)
+	}
+
+	// 8. 复用已消费码（case 1 的码）→ 「验证码错误或已过期」。
+	if _, err = s.Register(ctx, "reuse_user", "testpassword", "", "a@b.co", code); err == nil || !strings.Contains(err.Error(), "验证码错误或已过期") {
+		t.Fatalf("expected rejection for consumed code: %v", err)
+	}
+
+	// 9. 非法邮箱 → 「邮箱格式不正确」。
+	if _, err = s.Register(ctx, "bad_email_user", "testpassword", "", "bad", "123456"); err == nil || !strings.Contains(err.Error(), "邮箱格式不正确") {
+		t.Fatalf("expected invalid-email rejection: %v", err)
 	}
 }
