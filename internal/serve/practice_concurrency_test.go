@@ -32,18 +32,18 @@ func TestConcurrentSubmissions(t *testing.T) {
 			const n = 20
 			cookies := make([]*http.Cookie, n)
 			ids := make([]int64, n)
-for i := 0; i < n; i++ {
-			if sameSession && i > 0 {
-				cookies[i], ids[i] = cookies[0], ids[0]
-				continue
-			}
-			ctx := context.Background()
-			email := fmt.Sprintf("parallel_%d@test.local", i)
-			_, code, e := s.Study.CreateEmailCode(ctx, email)
-			if e != nil {
-				t.Fatal(e)
-			}
-			u, e := s.Study.Register(ctx, fmt.Sprintf("parallel_%d", i), "testpassword", "", email, code)
+			for i := 0; i < n; i++ {
+				if sameSession && i > 0 {
+					cookies[i], ids[i] = cookies[0], ids[0]
+					continue
+				}
+				ctx := context.Background()
+				email := fmt.Sprintf("parallel_%d@test.local", i)
+				_, code, e := s.Study.CreateEmailCode(ctx, email)
+				if e != nil {
+					t.Fatal(e)
+				}
+				u, e := s.Study.Register(ctx, fmt.Sprintf("parallel_%d", i), "testpassword", "", email, code)
 				if e != nil {
 					t.Fatal(e)
 				}
