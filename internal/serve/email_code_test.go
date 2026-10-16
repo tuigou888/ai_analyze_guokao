@@ -91,10 +91,22 @@ func TestEmailCodeEndpoint(t *testing.T) {
 		t.Fatal("expected 400 for missing code", w.Code, w.Body.String())
 	}
 
-	// 6. 邮箱枚举防护：已注册邮箱再发码 → 200（与未注册邮箱响应一致）。
-	w, _ = requestTest(t, h, "POST", "/api/auth/email-code", `{"email":"existing@test.local"}`, nil)
-	if w.Code != 200 {
-		t.Fatal("expected 200 for existing email", w.Code, w.Body.String())
+	// 6. 邮箱枚举防护：先注册账号绑定该邮箱，再对同一邮箱发码 → 200，且与未注册邮箱响应完全一致。
+	_, existCode, err := s.Study.CreateEmailCode(ctx, "existing@test.local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, _ = requestTest(t, h, "POST", "/api/auth/register", fmt.Sprintf(`{"username":"existing_user","password":"testpassword","nickname":"","email":"existing@test.local","code":%q}`, existCode), nil)
+	if w.Code != 201 {
+		t.Fatal("register existing email failed", w.Code, w.Body.String())
+	}
+	origClock := s.Study.Clock
+	s.Study.Clock = func() time.Time { return time.Now().Add(61 * time.Second) }
+	wExist, _ := requestTest(t, h, "POST", "/api/auth/email-code", `{"email":"existing@test.local"}`, nil)
+	wFresh, _ := requestTest(t, h, "POST", "/api/auth/email-code", `{"email":"unknown@test.local"}`, nil)
+	s.Study.Clock = origClock
+	if wExist.Code != 200 || wFresh.Code != 200 || wExist.Body.String() != wFresh.Body.String() {
+		t.Fatalf("enumeration leak: existing %d %s vs fresh %d %s", wExist.Code, wExist.Body.String(), wFresh.Code, wFresh.Body.String())
 	}
 }
 
