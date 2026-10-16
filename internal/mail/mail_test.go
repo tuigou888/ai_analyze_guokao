@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // smtpRecorder 记录假 SMTP 服务器收到的每一行（命令与 DATA 内容）。
@@ -126,5 +128,67 @@ func TestSendRefusesAuthWithoutTLS(t *testing.T) {
 	err := Send(context.Background(), cfg, "to@example.com", "主题", "正文")
 	if err == nil || !strings.Contains(err.Error(), "SMTP 服务器不支持加密连接") {
 		t.Fatal(err)
+	}
+}
+
+// silentSMTP 起一个假 SMTP 服务器：接受连接、发 220 问候后对一切命令保持沉默。
+func silentSMTP(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				c.Write([]byte("220 silent ESMTP\r\n"))
+				io.Copy(io.Discard, c)
+			}(conn)
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	return port
+}
+
+// 没有任何 ctx 取消时，沉默的 SMTP 服务器也不能拖住 Send 超过 smtpTimeout。
+func TestSendTimesOutOnSilentServer(t *testing.T) {
+	old := smtpTimeout
+	smtpTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { smtpTimeout = old })
+	port := silentSMTP(t)
+	cfg := Config{Host: "127.0.0.1", Port: port, From: "noreply@example.com"}
+	done := make(chan error, 1)
+	go func() { done <- Send(context.Background(), cfg, "to@example.com", "主题", "正文") }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected timeout error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Send blocked on silent SMTP server")
+	}
+}
+
+// 请求 ctx 取消后，仍阻塞在 SMTP 会话中的 Send 必须及时返回。
+func TestSendHonorsContextCancellation(t *testing.T) {
+	port := silentSMTP(t)
+	cfg := Config{Host: "127.0.0.1", Port: port, From: "noreply@example.com"}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Send(ctx, cfg, "to@example.com", "主题", "正文") }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error after ctx cancellation")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Send blocked despite ctx cancellation")
 	}
 }
