@@ -1,8 +1,8 @@
-version: "3.9"
-
 services:
   gk:
     image: ${IMAGE_NAME:-practice-gk}:${IMAGE_TAG:-latest}
+    build:
+      context: .
     container_name: gk
     restart: unless-stopped
     volumes:
@@ -13,14 +13,18 @@ services:
       - ./var/backups:/opt/gk/var/backups
     ports:
       - "${GK_HOST_PORT:-8080}:8080"
-      - "${GK_ADMIN_PORT:-8081}:8081"
     environment:
       - TZ=Asia/Shanghai
       - GOMAXPROCS=${GOMAXPROCS:-2}
       - GOMEMLIMIT=${GOMEMLIMIT:-768MiB}
       - GK_SECRET_KEY=${GK_SECRET_KEY:-}
-      - GK_ADDR=0.0.0.0:8080
-      - GK_TRUSTED_PROXIES=${GK_TRUSTED_PROXIES:-127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+    command:
+      - serve
+      - --db=/opt/gk/var/db/gk.sqlite
+      - --data=/opt/gk/var/data
+      - --secret-key-file=/opt/gk/var/secret.key
+      - --addr=0.0.0.0:8080
+      - "--public-origin=https://${DOMAIN:?请复制 deploy/.env.example 为 .env 并填写 DOMAIN}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
@@ -39,11 +43,14 @@ services:
     image: ${IMAGE_NAME:-practice-gk}:${IMAGE_TAG:-latest}
     container_name: gk-backup
     restart: "no"
-    entrypoint: ["/opt/gk/docker-entrypoint.sh"]
+    profiles: ["backup"]
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - "backup"
-      - "--bundle"
-      - "/opt/gk/var/backups/gk-$(date +%Y%m%d)-$(date +%H%M%S)"
+      - >-
+        exec /opt/gk/gk backup
+        --db /opt/gk/var/db/gk.sqlite
+        --secret-key-file /opt/gk/var/secret.key
+        --bundle /opt/gk/var/backups/gk-$$(date +%Y%m%d-%H%M%S)
     volumes:
       - ./var/db:/opt/gk/var/db
       - ./var/secret.key:/opt/gk/var/secret.key:ro
@@ -53,8 +60,6 @@ services:
       - GK_SECRET_KEY=${GK_SECRET_KEY:-}
     networks:
       - gk-net
-    depends_on:
-      - gk
     deploy:
       resources:
         limits:
