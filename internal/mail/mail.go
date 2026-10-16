@@ -31,6 +31,10 @@ func (c Config) Configured() bool {
 // ErrNotConfigured 表示未配置 SMTP，调用方据此走开发降级路径。
 var ErrNotConfigured = errors.New("SMTP 未配置")
 
+// smtpTimeout 是整个 SMTP 会话（问候、认证、DATA、QUIT）的读写截止时间，
+// 防止服务器接受连接后装死拖住调用方。测试中可调小。
+var smtpTimeout = 15 * time.Second
+
 // Send 用给定配置同步发送一封纯文本邮件。
 //
 // 端口 465 走隐式 TLS；其余端口先明文连接，服务器支持时升级 STARTTLS。
@@ -44,7 +48,20 @@ func Send(ctx context.Context, cfg Config, to, subject, body string) error {
 	if err != nil {
 		return fmt.Errorf("连接 SMTP 服务器失败: %w", err)
 	}
+	rawConn := conn
 	defer conn.Close()
+	if err := rawConn.SetDeadline(time.Now().Add(smtpTimeout)); err != nil {
+		return fmt.Errorf("设置 SMTP 超时失败: %w", err)
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			rawConn.Close()
+		case <-done:
+		}
+	}()
 	if cfg.Port == "465" {
 		conn = tls.Client(conn, &tls.Config{ServerName: cfg.Host})
 	}

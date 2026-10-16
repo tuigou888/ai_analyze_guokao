@@ -1,14 +1,17 @@
 package serve
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"ai_analyze_guokao/internal/admin"
 	"ai_analyze_guokao/internal/setting"
 )
 
@@ -88,10 +91,22 @@ func TestEmailCodeEndpoint(t *testing.T) {
 		t.Fatal("expected 400 for missing code", w.Code, w.Body.String())
 	}
 
-	// 6. 邮箱枚举防护：已注册邮箱再发码 → 200（与未注册邮箱响应一致）。
-	w, _ = requestTest(t, h, "POST", "/api/auth/email-code", `{"email":"existing@test.local"}`, nil)
-	if w.Code != 200 {
-		t.Fatal("expected 200 for existing email", w.Code, w.Body.String())
+	// 6. 邮箱枚举防护：先注册账号绑定该邮箱，再对同一邮箱发码 → 200，且与未注册邮箱响应完全一致。
+	_, existCode, err := s.Study.CreateEmailCode(ctx, "existing@test.local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, _ = requestTest(t, h, "POST", "/api/auth/register", fmt.Sprintf(`{"username":"existing_user","password":"testpassword","nickname":"","email":"existing@test.local","code":%q}`, existCode), nil)
+	if w.Code != 201 {
+		t.Fatal("register existing email failed", w.Code, w.Body.String())
+	}
+	origClock := s.Study.Clock
+	s.Study.Clock = func() time.Time { return time.Now().Add(61 * time.Second) }
+	wExist, _ := requestTest(t, h, "POST", "/api/auth/email-code", `{"email":"existing@test.local"}`, nil)
+	wFresh, _ := requestTest(t, h, "POST", "/api/auth/email-code", `{"email":"unknown@test.local"}`, nil)
+	s.Study.Clock = origClock
+	if wExist.Code != 200 || wFresh.Code != 200 || wExist.Body.String() != wFresh.Body.String() {
+		t.Fatalf("enumeration leak: existing %d %s vs fresh %d %s", wExist.Code, wExist.Body.String(), wFresh.Code, wFresh.Body.String())
 	}
 }
 
@@ -214,5 +229,98 @@ func TestEmailCodeRegisterUsernameConflict(t *testing.T) {
 	w, _ := requestTest(t, h, "POST", "/api/auth/register", fmt.Sprintf(`{"username":"conflict3_user","password":"testpassword","nickname":"","email":"conflict3@test.local","code":%q}`, code2), nil)
 	if w.Code != 409 {
 		t.Fatal("expected 409 for username conflict", w.Code, w.Body.String())
+	}
+}
+
+// fakeSMTP 起一个最小 SMTP 服务器：不广告 STARTTLS、不要求认证、命令回 250。
+func fakeSMTP(t *testing.T) (host, port string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				r := bufio.NewReader(c)
+				write := func(s string) { fmt.Fprintf(c, "%s\r\n", s) }
+				write("220 test ESMTP")
+				inData := false
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					line = strings.TrimRight(line, "\r\n")
+					if inData {
+						if line == "." {
+							inData = false
+							write("250 OK")
+						}
+						continue
+					}
+					switch {
+					case strings.HasPrefix(line, "EHLO"), strings.HasPrefix(line, "HELO"):
+						write("250-test ESMTP")
+						write("250 OK")
+					case line == "DATA":
+						write("354 go ahead")
+						inData = true
+					case line == "QUIT":
+						write("221 bye")
+						return
+					default:
+						write("250 OK")
+					}
+				}
+			}(conn)
+		}
+	}()
+	h, p, _ := net.SplitHostPort(ln.Addr().String())
+	return h, p
+}
+
+func TestMailEndpoint(t *testing.T) {
+	s, db := fixture(t)
+	ctx := context.Background()
+	if e := admin.Create(ctx, db, "admin", "admin-password"); e != nil {
+		t.Fatal(e)
+	}
+	token, e := admin.Login(ctx, db, "admin", "admin-password")
+	if e != nil {
+		t.Fatal(e)
+	}
+	c := &http.Cookie{Name: sessionCookie, Value: token}
+	h := s.Routes()
+
+	// 1. 未配置 → 400「请先在设置中配置 SMTP」。
+	w, v := requestTest(t, h, "POST", "/api/admin/test-mail", `{"to":"a@b.co"}`, c)
+	if w.Code != 400 || v["error"] != "请先在设置中配置 SMTP" {
+		t.Fatal(w.Code, w.Body.String())
+	}
+
+	// 2. 配置假 SMTP → 200 {"ok":true,"latency_ms":≥0}。
+	host, port := fakeSMTP(t)
+	for k, val := range map[string]string{
+		setting.KeySMTPHost: host,
+		setting.KeySMTPPort: port,
+		setting.KeyMailFrom: "noreply@test.local",
+	} {
+		if err := s.Settings.Set(ctx, k, val, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, v = requestTest(t, h, "POST", "/api/admin/test-mail", `{"to":"to@example.com"}`, c)
+	if w.Code != 200 || v["ok"] != true {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if ms, ok := v["latency_ms"].(float64); !ok || ms < 0 {
+		t.Fatalf("latency_ms missing or negative: %v", v)
 	}
 }

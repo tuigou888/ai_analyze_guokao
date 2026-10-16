@@ -254,7 +254,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 // ---- 工具 ----
 
 func isSecretSetting(key string) bool {
-	return key == setting.KeyAPIKey
+	return key == setting.KeyAPIKey || key == setting.KeySMTPPassword
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
