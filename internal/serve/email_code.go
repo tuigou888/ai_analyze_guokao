@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"ai_analyze_guokao/internal/mail"
 	"ai_analyze_guokao/internal/setting"
@@ -81,9 +82,10 @@ func (s *Server) handleTestMail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请先在设置中配置 SMTP")
 		return
 	}
+	start := time.Now()
 	if err := mail.Send(r.Context(), cfg, in.To, "行测研习测试邮件", "这是一封测试邮件，收到即表示邮件服务配置正常。"); err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "latency_ms": time.Since(start).Milliseconds()})
 }
