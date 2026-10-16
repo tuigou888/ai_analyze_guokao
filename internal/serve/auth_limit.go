@@ -124,12 +124,15 @@ func (l *authLimiter) middleware(next http.Handler) http.Handler {
 			writeErr(w, 429, "请求过于频繁，请稍后重试")
 			return
 		}
-		select {
-		case l.slots <- struct{}{}:
-			defer func() { <-l.slots }()
-			next.ServeHTTP(w, r)
-		default:
-			writeErr(w, 429, "登录繁忙，请稍后重试")
+		if p != "/api/auth/email-code" {
+			select {
+			case l.slots <- struct{}{}:
+				defer func() { <-l.slots }()
+			default:
+				writeErr(w, 429, "登录繁忙，请稍后重试")
+				return
+			}
 		}
+		next.ServeHTTP(w, r)
 	})
 }

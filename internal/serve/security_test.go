@@ -157,6 +157,30 @@ func TestOriginOnlyTrustsConfiguredProxyProtocol(t *testing.T) {
 	}
 }
 
+func TestAuthLimiterSlotsOnlyGatePasswordEndpoints(t *testing.T) {
+	l := newAuthLimiter()
+	l.slots <- struct{}{}
+	l.slots <- struct{}{}
+	defer func() { <-l.slots; <-l.slots }()
+	h := l.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+
+	r := httptest.NewRequest("POST", "/api/auth/email-code", strings.NewReader(`{"email":"a@b.co"}`))
+	r.RemoteAddr = "192.0.2.1:1234"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 204 {
+		t.Fatalf("email-code blocked by password slots: %d", w.Code)
+	}
+
+	r = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"u"}`))
+	r.RemoteAddr = "192.0.2.2:1234"
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 429 {
+		t.Fatalf("login should wait for a slot: %d", w.Code)
+	}
+}
+
 func TestSettingsKeepSMTPPasswordWhenEmptyOrMasked(t *testing.T) {
 	s, db := fixture(t)
 	ctx := context.Background()
