@@ -2,6 +2,7 @@ package serve
 
 import (
 	"ai_analyze_guokao/internal/admin"
+	"ai_analyze_guokao/internal/setting"
 	"context"
 	"fmt"
 	"net/http"
@@ -152,6 +153,38 @@ func TestOriginOnlyTrustsConfiguredProxyProtocol(t *testing.T) {
 		s.sameOrigin(next).ServeHTTP(w, r)
 		if w.Code != v.want {
 			t.Fatal(v, w.Code)
+		}
+	}
+}
+
+func TestSettingsKeepSMTPPasswordWhenEmptyOrMasked(t *testing.T) {
+	s, db := fixture(t)
+	ctx := context.Background()
+	if e := admin.Create(ctx, db, "admin", "originalpw"); e != nil {
+		t.Fatal(e)
+	}
+	token, e := admin.Login(ctx, db, "admin", "originalpw")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := s.Settings.Set(ctx, setting.KeySMTPPassword, "smtp-secret", "test"); e != nil {
+		t.Fatal(e)
+	}
+	c := &http.Cookie{Name: sessionCookie, Value: token}
+	h := s.Routes()
+
+	// 空串和掩码都表示「未修改」，不得清掉已存的 SMTP 密码。
+	for _, body := range []string{
+		`{"mail.smtp_password":""}`,
+		fmt.Sprintf(`{"mail.smtp_password":%q}`, setting.Mask),
+	} {
+		w, _ := requestTest(t, h, "PUT", "/api/admin/settings", body, c)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		got, err := s.Settings.Get(ctx, setting.KeySMTPPassword)
+		if err != nil || got != "smtp-secret" {
+			t.Fatalf("password wiped by %s: %q %v", body, got, err)
 		}
 	}
 }
