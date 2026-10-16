@@ -403,6 +403,35 @@ CREATE TABLE email_code (
   created_at TEXT NOT NULL
 );
 CREATE INDEX idx_email_code_email ON email_code(email, created_at DESC);`,
+	// v14：权限分级底座——管理员分 super/operator、用户分 free/vip 与 active/banned、每日额度计数与管理审计表。存量管理员落 super、存量用户落 free/active/vip NULL，行为不变。
+	`
+-- 管理员角色：迁移时存量管理员落 DEFAULT 'super'，等价于"现有管理员自动成为超管"。
+ALTER TABLE admin_user ADD COLUMN role TEXT NOT NULL DEFAULT 'super';
+
+-- 用户角色与状态：存量用户落 DEFAULT，行为不变。
+ALTER TABLE app_user ADD COLUMN role           TEXT NOT NULL DEFAULT 'free';   -- free | vip
+ALTER TABLE app_user ADD COLUMN status         TEXT NOT NULL DEFAULT 'active'; -- active | banned
+ALTER TABLE app_user ADD COLUMN vip_expires_at TEXT;                            -- NULL=长期有效
+
+-- 每日额度计数（free 用户用量；会员不计数也不读它）。
+CREATE TABLE daily_usage (
+  user_id   INTEGER NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day       TEXT NOT NULL,                 -- Asia/Shanghai 自然日 YYYY-MM-DD
+  questions INTEGER NOT NULL DEFAULT 0,
+  papers    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(user_id, day)
+);
+
+-- 管理操作审计（只追加，不更新不改）。
+CREATE TABLE admin_audit (
+  id         INTEGER PRIMARY KEY,
+  admin      TEXT NOT NULL,                -- 操作人用户名
+  action     TEXT NOT NULL,                -- user_ban 等（见 §4.4）
+  target     TEXT NOT NULL,                -- 目标标识（如 user:7 / admin:3）
+  detail     TEXT,                         -- 变更摘要（JSON 或短文本）
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_admin_audit_created ON admin_audit(created_at DESC);`,
 }
 
 // Open 打开（必要时创建）数据库并跑迁移。
