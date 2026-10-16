@@ -23,6 +23,7 @@ const loading = ref(true)
 const saving = ref(false)
 const testing = ref(false)
 const notice = ref(null) // { kind: 'ok'|'err'|'warn', text }
+const noticeFrom = ref('llm')
 const testResult = ref(null)
 const keyIsSet = ref(false)
 const mailKeyIsSet = ref(false)
@@ -62,7 +63,8 @@ async function load() {
 }
 onMounted(load)
 
-async function save() {
+async function save(from = 'llm') {
+  noticeFrom.value = from
   saving.value = true
   notice.value = null
   try {
@@ -145,7 +147,7 @@ async function testMail() {
       </div>
 
       <div class="settings-actions">
-        <button class="primary" :disabled="saving || loading" @click="save">
+        <button class="primary" :disabled="saving || loading" @click="save('llm')">
           {{ saving ? '保存中…' : '保存' }}
         </button>
         <button class="ghost" :disabled="testing || loading" @click="testConn">
@@ -153,7 +155,7 @@ async function testMail() {
         </button>
       </div>
 
-      <p v-if="notice" :class="['notice', 'settings-feedback', notice.kind]">{{ notice.text }}</p>
+      <p v-if="notice && noticeFrom === 'llm'" :class="['notice', 'settings-feedback', notice.kind]">{{ notice.text }}</p>
 
       <div v-if="testResult" :class="['notice', 'settings-feedback', testResult.ok ? 'ok' : 'err']">
         <template v-if="testResult.ok">
@@ -194,6 +196,13 @@ async function testMail() {
         <span>发件人</span>
         <input v-model="form['mail.from']" class="mono" placeholder="noreply@example.com" />
       </label>
+
+      <div class="settings-actions">
+        <button class="primary" :disabled="saving || loading" @click="save('mail')">
+          {{ saving ? '保存中…' : '保存' }}
+        </button>
+      </div>
+      <p v-if="notice && noticeFrom === 'mail'" :class="['notice', 'settings-feedback', notice.kind]">{{ notice.text }}</p>
 
       <hr class="section-divider" />
       <h3>发送测试邮件</h3>
