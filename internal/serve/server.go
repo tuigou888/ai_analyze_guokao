@@ -100,7 +100,7 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 				token = c.Value
 			}
 		}
-		name, err := admin.Verify(r.Context(), s.DB, token)
+		name, _, err := admin.Verify(r.Context(), s.DB, token)
 		if err != nil {
 			writeErr(w, http.StatusUnauthorized, "未登录或会话已过期")
 			return
@@ -128,7 +128,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	token, err := admin.Login(r.Context(), s.DB, in.Username, in.Password)
+	token, _, _, err := admin.Login(r.Context(), s.DB, in.Username, in.Password)
 	if err != nil {
 		if errors.Is(err, admin.ErrInvalidCredentials) {
 			writeErr(w, http.StatusUnauthorized, "账号或密码错误")

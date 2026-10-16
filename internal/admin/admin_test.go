@@ -14,10 +14,10 @@ func TestPasswordAndRevocationRollbackTogether(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
-	if e = Create(ctx, db, "admin", "originalpw"); e != nil {
+	if e = Create(ctx, db, "admin", "originalpw", RoleSuper); e != nil {
 		t.Fatal(e)
 	}
-	token, e := Login(ctx, db, "admin", "originalpw")
+	token, _, _, e := Login(ctx, db, "admin", "originalpw")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -27,13 +27,13 @@ func TestPasswordAndRevocationRollbackTogether(t *testing.T) {
 	if e = SetPassword(ctx, db, "admin", "replacementpw"); e == nil {
 		t.Fatal("injected failure missing")
 	}
-	if _, e = Login(ctx, db, "admin", "replacementpw"); e == nil {
+	if _, _, _, e = Login(ctx, db, "admin", "replacementpw"); e == nil {
 		t.Fatal("password committed despite revocation failure")
 	}
-	if _, e = Login(ctx, db, "admin", "originalpw"); e != nil {
+	if _, _, _, e = Login(ctx, db, "admin", "originalpw"); e != nil {
 		t.Fatal("old password not restored", e)
 	}
-	if _, e = Verify(ctx, db, token); e != nil {
+	if _, _, e = Verify(ctx, db, token); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = db.Exec(`DROP TRIGGER fail_revocation`); e != nil {
@@ -42,7 +42,7 @@ func TestPasswordAndRevocationRollbackTogether(t *testing.T) {
 	if e = SetPassword(ctx, db, "admin", "replacementpw"); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = Verify(ctx, db, token); e == nil {
+	if _, _, e = Verify(ctx, db, token); e == nil {
 		t.Fatal("old token survived successful change")
 	}
 }
