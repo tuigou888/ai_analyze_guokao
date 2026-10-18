@@ -27,6 +27,7 @@ var (
 	ErrForbidden     = errors.New("请先作答后查看解析")
 	ErrDraftConflict = errors.New("练习已在其他窗口更新，请加载最新草稿后再保存或提交")
 	ErrEmailConflict = errors.New("该邮箱已被注册")
+	ErrBanned        = errors.New("账号已封禁，如有疑问请联系管理员")
 )
 
 const SessionTTL = 7 * 24 * time.Hour
@@ -38,9 +39,24 @@ type Service struct {
 	Clock func() time.Time
 }
 type User struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	Nickname string `json:"nickname"`
+	ID           int64  `json:"id"`
+	Username     string `json:"username"`
+	Nickname     string `json:"nickname"`
+	Role         string `json:"role"`
+	VipExpiresAt string `json:"vip_expires_at,omitempty"`
+}
+
+var examZone = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+func (s *Service) today() string {
+	return s.clockNow().In(examZone).Format("2006-01-02")
+}
+
+func effectiveRole(role, expires, today string) string {
+	if role == "vip" && expires != "" && expires <= today {
+		return "free"
+	}
+	return role
 }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
@@ -143,7 +159,7 @@ func (s *Service) Register(ctx context.Context, username, password, nickname, em
 	if err != nil {
 		return User{}, err
 	}
-	return User{id, username, nickname}, nil
+	return User{ID: id, Username: username, Nickname: nickname, Role: "free"}, nil
 }
 
 var errWrongCode = errors.New("wrong code")
@@ -159,8 +175,9 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 }
 func (s *Service) LoginWithMetadata(ctx context.Context, username, password string, metadata LoginMetadata) (string, User, error) {
 	var u User
-	var hash string
-	err := s.DB.QueryRowContext(ctx, `SELECT id,username,nickname,password_hash FROM app_user WHERE username=?`, strings.TrimSpace(username)).Scan(&u.ID, &u.Username, &u.Nickname, &hash)
+	var hash, status, role string
+	var expires sql.NullString
+	err := s.DB.QueryRowContext(ctx, `SELECT id,username,nickname,password_hash,status,role,vip_expires_at FROM app_user WHERE username=?`, strings.TrimSpace(username)).Scan(&u.ID, &u.Username, &u.Nickname, &hash, &status, &role, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return "", u, ErrCredentials
@@ -171,6 +188,11 @@ func (s *Service) LoginWithMetadata(ctx context.Context, username, password stri
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		return "", User{}, ErrCredentials
 	}
+	if status == "banned" {
+		return "", User{}, ErrBanned
+	}
+	u.Role = effectiveRole(role, expires.String, s.today())
+	u.VipExpiresAt = expires.String
 	b := make([]byte, 32)
 	if _, err = rand.Read(b); err != nil {
 		return "", u, err
@@ -213,11 +235,21 @@ func (s *Service) LoginWithMetadata(ctx context.Context, username, password stri
 }
 func (s *Service) Verify(ctx context.Context, token string) (User, error) {
 	var u User
-	err := s.DB.QueryRowContext(ctx, `SELECT u.id,u.username,u.nickname FROM app_session s JOIN app_user u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?`, tokenHash(token), s.clockNow().UTC().Format(time.RFC3339)).Scan(&u.ID, &u.Username, &u.Nickname)
+	var status, role string
+	var expires sql.NullString
+	err := s.DB.QueryRowContext(ctx, `SELECT u.id,u.username,u.nickname,u.status,u.role,u.vip_expires_at FROM app_session s JOIN app_user u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?`, tokenHash(token), s.clockNow().UTC().Format(time.RFC3339)).Scan(&u.ID, &u.Username, &u.Nickname, &status, &role, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = ErrCredentials
+		return u, ErrCredentials
 	}
-	return u, err
+	if err != nil {
+		return u, err
+	}
+	if status == "banned" {
+		return User{}, ErrCredentials
+	}
+	u.Role = effectiveRole(role, expires.String, s.today())
+	u.VipExpiresAt = expires.String
+	return u, nil
 }
 func (s *Service) Logout(ctx context.Context, token string) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM app_session WHERE token=?`, tokenHash(token))
