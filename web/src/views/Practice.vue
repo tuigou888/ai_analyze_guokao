@@ -57,7 +57,7 @@ function choose(option){if(done.value||submitting.value)return;const q=question.
 function go(i){if(submitting.value)return;track();index.value=i;favorite.value='';schedule()}
 async function submit(force=false){if(submitting.value||done.value)return;if(conflict.value){error.value='请先处理草稿冲突';return}if(count.value<session.value.total&&!force){warning.value=true;return}submitting.value=true;error.value='';try{await flush();session.value=await api.submit(session.value.session_id,payload(),session.value.draft_revision);elapsed.value=Math.floor(session.value.duration_ms/1000);warning.value=false;saveState.value='练习已提交'}catch(e){error.value=e.message;showConflict(e)}finally{submitting.value=false}}
 async function collect(){try{await api.wrongAction(question.value.id,'favorite');favorite.value='已加入错题与收藏'}catch(e){error.value=e.message}}
-async function again(){busy.value=true;try{const s=await api.createSession(session.value.kind,session.value.spec);await router.replace(`/practice?session=${s.session_id}`)}catch(e){error.value=e.message;busy.value=false}}
+async function again(){busy.value=true;try{const s=await api.createSession(session.value.kind,session.value.spec);await router.replace(`/practice?session=${s.session_id}`)}catch(e){const hours=e.status===429&&e.retryAfter?Math.ceil(e.retryAfter/3600):0;error.value=e.message+(hours>0?`（约 ${hours} 小时后重置）`:'');busy.value=false}}
 function correct(option){return done.value&&result.value?.correct_answer?.includes(option)}
 function selected(option){return (answers.value[question.value?.id]||'').includes(option)}
 function beforeUnload(e){if(!done.value&&(savedGeneration!==editGeneration||pendingSaves||conflict.value||saveFailed)){e.preventDefault();e.returnValue=''}}

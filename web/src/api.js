@@ -15,6 +15,8 @@ export async function request(path, options = {}) {
     const e = new Error(body.error || `HTTP ${res.status}`)
     e.status = res.status
     e.code = body.code
+    const retryAfter = parseInt(res.headers.get('Retry-After'), 10)
+    e.retryAfter = Number.isNaN(retryAfter) ? null : retryAfter
     if (body.code === 'account_changed') window.dispatchEvent(new CustomEvent('account-changed', { detail: expectedUser }))
     if (res.status === 401 && !path.endsWith('/login') && !path.endsWith('/me')) {
       window.dispatchEvent(new CustomEvent('session-expired', { detail: path.startsWith('/api/admin/') ? 'admin' : { kind: 'user', expectedUser } }))

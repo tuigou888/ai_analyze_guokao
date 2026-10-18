@@ -34,9 +34,23 @@ async function logout() {
       <div class="sidebar-bottom"><RouterLink to="/account">个人中心</RouterLink><RouterLink to="/admin">管理入口</RouterLink></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><span>{{ route.meta.title }}</span><div class="topbar-user"><RouterLink v-if="!route.meta.admin" to="/account" class="pc-topbar-link" aria-label="打开个人中心"><span :class="['avatar','pc-avatar',`pc-avatar-${auth.profile?.avatar_id || 0}`]">{{ Array.from(auth.user?.nickname || auth.user?.username || '?')[0]?.toUpperCase() }}</span><span>{{ auth.user?.nickname || auth.user?.username }}</span></RouterLink><span v-else>{{ auth.admin?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
+      <header class="topbar"><span>{{ route.meta.title }}</span><div class="topbar-user"><RouterLink v-if="!route.meta.admin" to="/account" class="pc-topbar-link" aria-label="打开个人中心"><span :class="['avatar','pc-avatar',`pc-avatar-${auth.profile?.avatar_id || 0}`]">{{ Array.from(auth.user?.nickname || auth.user?.username || '?')[0]?.toUpperCase() }}</span><span v-if="auth.user?.role === 'vip'" class="vip-badge">{{ auth.user.vip_expires_at ? `会员至 ${auth.user.vip_expires_at.slice(0,10)}` : '会员' }}</span><span>{{ auth.user?.nickname || auth.user?.username }}</span></RouterLink><span v-else>{{ auth.admin?.username }}</span><button class="text-button" @click="logout">退出</button></div></header>
       <main id="main" tabindex="-1"><p v-if="auth.identityChanged&&!route.meta.admin" class="notice warn" role="alert">登录账户已变化，请记录未保存输入后重新进入个人中心。本页输入已保留。 <a href="/account">重新进入个人中心</a></p><p v-if="error" class="notice err" role="alert">{{ error }}</p><RouterView v-slot="{ Component }"><component :is="Component" :key="route.fullPath" ref="currentView" @logout="logout" /></RouterView></main>
       <footer class="site-footer">行测研习 <span>以真题为起点，以理解为进步。</span></footer>
     </div>
   </div>
 </template>
+<style scoped>
+.vip-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-warning-surface);
+  color: var(--color-warning);
+  border-radius: var(--radius-small);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+</style>
