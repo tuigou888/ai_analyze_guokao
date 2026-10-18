@@ -17,6 +17,8 @@ const form = reactive({
   'mail.smtp_user': '',
   'mail.smtp_password': '',
   'mail.from': '',
+  'user.daily_free_questions': '50',
+  'user.daily_free_papers': '3',
 })
 
 const loading = ref(true)
@@ -251,6 +253,31 @@ async function testMail() {
     </section>
 
     <section class="card">
+      <h2>用户额度</h2>
+      <p class="muted small">免费用户每日可用额度；会员不受限。留空或非正数会回落默认值。</p>
+
+      <div class="settings-row">
+        <label>
+          <span>每日免费题量</span>
+          <input v-model="form['user.daily_free_questions']" type="number" min="1" />
+          <small class="field-hint">默认 50 题</small>
+        </label>
+        <label>
+          <span>每日免费试卷</span>
+          <input v-model="form['user.daily_free_papers']" type="number" min="1" />
+          <small class="field-hint">默认 3 卷</small>
+        </label>
+      </div>
+
+      <div class="settings-actions">
+        <button class="primary" :disabled="saving || loading" @click="save('quota')">
+          {{ saving ? '保存中…' : '保存' }}
+        </button>
+      </div>
+      <p v-if="notice && noticeFrom === 'quota'" :class="['notice', 'settings-feedback', notice.kind]">{{ notice.text }}</p>
+    </section>
+
+    <section class="card">
       <h2>接口约定</h2>
       <p class="muted small">当前后端支持的配置键（也可用 <code>gk config set</code> 修改）：</p>
       <table class="data-table settings-reference-table">
@@ -267,6 +294,8 @@ async function testMail() {
           <tr><td class="mono">mail.smtp_user</td><td>SMTP 用户名（可选）</td></tr>
           <tr><td class="mono">mail.smtp_password</td><td>SMTP 密码（密文存储）</td></tr>
           <tr><td class="mono">mail.from</td><td>发件人地址</td></tr>
+          <tr><td class="mono">user.daily_free_questions</td><td>免费用户每日题量（默认 50）</td></tr>
+          <tr><td class="mono">user.daily_free_papers</td><td>免费用户每日试卷数（默认 3）</td></tr>
         </tbody>
       </table>
     </section>
