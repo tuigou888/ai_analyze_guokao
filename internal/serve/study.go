@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -79,7 +80,8 @@ func (s *Server) secondsUntilTomorrow() int64 {
 		now = s.Study.Clock()
 	}
 	y, m, d := now.In(study.ExamZone).Date()
-	return int64(time.Date(y, m, d+1, 0, 0, 0, 0, study.ExamZone).Sub(now).Seconds())
+	// 上取整：午夜前不足 1 秒时 Retry-After 也必须是 1，不能是 0。
+	return int64(math.Ceil(time.Date(y, m, d+1, 0, 0, 0, 0, study.ExamZone).Sub(now).Seconds()))
 }
 func (s *Server) respond(w http.ResponseWriter, v any, err error) {
 	if err != nil {
