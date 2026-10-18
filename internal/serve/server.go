@@ -86,17 +86,22 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/admin/login", s.handleLogin)
 		r.Post("/admin/logout", s.handleLogout)
 
+		// 通用管理：operator 即可。
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Get("/admin/me", s.handleMe)
 			r.Post("/admin/concepts/refresh", func(w http.ResponseWriter, r *http.Request) {
 				s.respond(w, map[string]any{"ok": true}, s.Study.RefreshConcepts(r.Context()))
 			})
+			r.Post("/admin/password", s.handleChangePassword)
+		})
+		// 超管专属：能看/改服务端配置、发探测请求。
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAdmin, s.requireRole)
 			r.Get("/admin/settings", s.handleGetSettings)
 			r.Put("/admin/settings", s.handlePutSettings)
 			r.Post("/admin/test-llm", s.handleTestLLM)
 			r.Post("/admin/test-mail", s.handleTestMail)
-			r.Post("/admin/password", s.handleChangePassword)
 		})
 	})
 
@@ -111,6 +116,15 @@ func (s *Server) Routes() http.Handler {
 
 const sessionCookie = "gk_admin"
 
+// adminRoleKey 承载管理员角色：requireAdmin 验证后放上下文，requireRole 与
+// handleMe 读取。
+type adminRoleKey struct{}
+
+func currentAdminRole(r *http.Request) string {
+	role, _ := r.Context().Value(adminRoleKey{}).(string)
+	return role
+}
+
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearer(r)
@@ -119,12 +133,23 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 				token = c.Value
 			}
 		}
-		name, _, err := admin.Verify(r.Context(), s.DB, token)
+		name, role, err := admin.Verify(r.Context(), s.DB, token)
 		if err != nil {
 			writeErr(w, http.StatusUnauthorized, "未登录或会话已过期")
 			return
 		}
 		r.Header.Set("X-Admin-User", name)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminRoleKey{}, role)))
+	})
+}
+
+// requireRole 只放行超级管理员；必须挂在 requireAdmin 之后。
+func (s *Server) requireRole(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if currentAdminRole(r) != admin.RoleSuper {
+			writeErr(w, http.StatusForbidden, "该操作需要超级管理员权限")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -147,7 +172,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	token, _, _, err := admin.Login(r.Context(), s.DB, in.Username, in.Password)
+	token, name, role, err := admin.Login(r.Context(), s.DB, in.Username, in.Password)
 	if err != nil {
 		if errors.Is(err, admin.ErrInvalidCredentials) {
 			writeErr(w, http.StatusUnauthorized, "账号或密码错误")
@@ -160,7 +185,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Name: sessionCookie, Value: token, Path: "/",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: int(admin.SessionTTL.Seconds()),
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"username": in.Username})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": name, "role": role})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +204,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"username": r.Header.Get("X-Admin-User")})
+	writeJSON(w, http.StatusOK, map[string]any{"username": r.Header.Get("X-Admin-User"), "role": currentAdminRole(r)})
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {

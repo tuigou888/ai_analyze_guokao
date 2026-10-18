@@ -55,6 +55,8 @@ func (s *Server) studyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, study.ErrQuotaExceeded):
 		w.Header().Set("Retry-After", strconv.FormatInt(s.secondsUntilTomorrow(), 10))
 		writeErr(w, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, study.ErrBanned):
+		writeErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, study.ErrEmailConflict):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, study.ErrInvalid):
