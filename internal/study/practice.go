@@ -7,10 +7,22 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"ai_analyze_guokao/internal/store"
 )
+
+const (
+	DefaultFreeQuestions = 50
+	DefaultFreePapers    = 3
+)
+
+var ErrQuotaExceeded = errors.New("今日免费额度已用完，明日重置；升级会员不限量")
+
+func QuotaDay(t time.Time) string {
+	return t.In(ExamZone).Format("2006-01-02")
+}
 
 type Spec struct {
 	Filter
@@ -143,11 +155,49 @@ func (s *Service) CreateSession(ctx context.Context, user int64, kind string, sp
 	}
 	raw, _ := json.Marshal(spec)
 	qi, _ := json.Marshal(ids)
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO practice_session(user_id,kind,spec,question_ids,started_at,total) VALUES(?,?,?,?,?,?)`, user, kind, string(raw), string(qi), now(), len(ids))
-	if err != nil {
-		return Session{}, err
-	}
-	id, err := res.LastInsertId()
+	var id int64
+	err := store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
+		today := QuotaDay(s.clockNow())
+		var role string
+		var expires sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT role,vip_expires_at FROM app_user WHERE id=?`, user).Scan(&role, &expires); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if !(role == "vip" && (!expires.Valid || expires.String >= today)) {
+			questions, papers := DefaultFreeQuestions, DefaultFreePapers
+			if s.Quota != nil {
+				questions, papers = s.Quota(ctx)
+			}
+			var usedQuestions, usedPapers int
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(questions,0),COALESCE(papers,0) FROM daily_usage WHERE user_id=? AND day=?`, user, today).Scan(&usedQuestions, &usedPapers); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if kind == "paperset" {
+				if usedPapers+1 > papers {
+					return ErrQuotaExceeded
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO daily_usage(user_id,day,questions,papers) VALUES(?,?,0,1) ON CONFLICT(user_id,day) DO UPDATE SET papers=papers+1`, user, today); err != nil {
+					return err
+				}
+			} else {
+				if usedQuestions+len(ids) > questions {
+					return ErrQuotaExceeded
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO daily_usage(user_id,day,questions,papers) VALUES(?,?,?,0) ON CONFLICT(user_id,day) DO UPDATE SET questions=questions+?`, user, today, len(ids), len(ids)); err != nil {
+					return err
+				}
+			}
+		}
+		res, err := tx.ExecContext(ctx, `INSERT INTO practice_session(user_id,kind,spec,question_ids,started_at,total) VALUES(?,?,?,?,?,?)`, user, kind, string(raw), string(qi), now(), len(ids))
+		if err != nil {
+			return err
+		}
+		id, err = res.LastInsertId()
+		return err
+	})
 	if err != nil {
 		return Session{}, err
 	}

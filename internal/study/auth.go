@@ -37,6 +37,7 @@ var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("constant-timing-placehold
 type Service struct {
 	DB    *sql.DB
 	Clock func() time.Time
+	Quota func(ctx context.Context) (questions, papers int)
 }
 type User struct {
 	ID           int64  `json:"id"`
