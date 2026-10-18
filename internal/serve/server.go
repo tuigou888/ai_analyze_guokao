@@ -94,6 +94,10 @@ func (s *Server) Routes() http.Handler {
 				s.respond(w, map[string]any{"ok": true}, s.Study.RefreshConcepts(r.Context()))
 			})
 			r.Post("/admin/password", s.handleChangePassword)
+			r.Get("/admin/users", s.handleAdminListUsers)
+			r.Put("/admin/users/{id}/status", s.handleAdminSetUserStatus)
+			r.Put("/admin/users/{id}/role", s.handleAdminSetUserRole)
+			r.Put("/admin/users/{id}/password", s.handleAdminResetUserPassword)
 		})
 		// 超管专属：能看/改服务端配置、发探测请求。
 		r.Group(func(r chi.Router) {
