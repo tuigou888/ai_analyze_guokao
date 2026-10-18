@@ -289,10 +289,10 @@ func fakeSMTP(t *testing.T) (host, port string) {
 func TestMailEndpoint(t *testing.T) {
 	s, db := fixture(t)
 	ctx := context.Background()
-	if e := admin.Create(ctx, db, "admin", "admin-password"); e != nil {
+	if e := admin.Create(ctx, db, "admin", "admin-password", "super"); e != nil {
 		t.Fatal(e)
 	}
-	token, e := admin.Login(ctx, db, "admin", "admin-password")
+	token, _, _, e := admin.Login(ctx, db, "admin", "admin-password")
 	if e != nil {
 		t.Fatal(e)
 	}

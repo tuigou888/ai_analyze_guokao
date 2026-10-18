@@ -110,10 +110,10 @@ func TestDecodeRejectsTextForm(t *testing.T) {
 func TestAdminHTTPPasswordRequiresCurrentPassword(t *testing.T) {
 	s, db := fixture(t)
 	ctx := context.Background()
-	if e := admin.Create(ctx, db, "admin", "originalpw"); e != nil {
+	if e := admin.Create(ctx, db, "admin", "originalpw", "super"); e != nil {
 		t.Fatal(e)
 	}
-	token, e := admin.Login(ctx, db, "admin", "originalpw")
+	token, _, _, e := admin.Login(ctx, db, "admin", "originalpw")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -123,14 +123,14 @@ func TestAdminHTTPPasswordRequiresCurrentPassword(t *testing.T) {
 	if w.Code == 200 {
 		t.Fatal("password changed without current password")
 	}
-	if _, e = admin.Login(ctx, db, "admin", "originalpw"); e != nil {
+	if _, _, _, e = admin.Login(ctx, db, "admin", "originalpw"); e != nil {
 		t.Fatal(e)
 	}
 	w, _ = requestTest(t, h, "POST", "/api/admin/password", `{"current_password":"originalpw","password":"replacementpw"}`, c)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	if _, e = admin.Verify(ctx, db, token); e == nil {
+	if _, _, e = admin.Verify(ctx, db, token); e == nil {
 		t.Fatal("token survives")
 	}
 }
@@ -184,10 +184,10 @@ func TestAuthLimiterSlotsOnlyGatePasswordEndpoints(t *testing.T) {
 func TestSettingsKeepSMTPPasswordWhenEmptyOrMasked(t *testing.T) {
 	s, db := fixture(t)
 	ctx := context.Background()
-	if e := admin.Create(ctx, db, "admin", "originalpw"); e != nil {
+	if e := admin.Create(ctx, db, "admin", "originalpw", "super"); e != nil {
 		t.Fatal(e)
 	}
-	token, e := admin.Login(ctx, db, "admin", "originalpw")
+	token, _, _, e := admin.Login(ctx, db, "admin", "originalpw")
 	if e != nil {
 		t.Fatal(e)
 	}
