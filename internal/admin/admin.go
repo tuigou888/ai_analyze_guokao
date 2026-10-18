@@ -109,6 +109,23 @@ func ChangePassword(ctx context.Context, db *sql.DB, username, current, password
 }
 
 func setPassword(ctx context.Context, db *sql.DB, username, password, expectedHash string) error {
+	name := strings.TrimSpace(username)
+	return setPasswordFor(ctx, db, password,
+		`UPDATE admin_user SET password_hash=? WHERE username=? AND (?='' OR password_hash=?)`,
+		[]any{name, expectedHash, expectedHash},
+		`DELETE FROM admin_session WHERE admin_id = (SELECT id FROM admin_user WHERE username=?)`,
+		[]any{name},
+		ErrInvalidCredentials)
+}
+
+// setPasswordFor 是改密的共享事务内核：口令长度校验、bcrypt 哈希，并在同一
+// 事务内执行 updateSQL（首个占位符绑定新哈希；命中 0 行返回 zeroRowsErr）
+// 与 revokeSQL（吊销目标管理员的全部会话）。两个改密入口只在 SQL 与
+// zeroRowsErr 上不同——改密与吊销必须同事务原子这点只有这一份实现。
+//
+// 注意：吊销 SQL 不要复用 updateSQL 的并发保护谓词。UPDATE 执行后行上已是
+// 新哈希，ChangePassword 传入的 expectedHash 不再匹配，复用会让吊销静默失效。
+func setPasswordFor(ctx context.Context, db *sql.DB, password, updateSQL string, updateArgs []any, revokeSQL string, revokeArgs []any, zeroRowsErr error) error {
 	if len(password) < 8 {
 		return errors.New("密码至少 8 位")
 	}
@@ -121,18 +138,14 @@ func setPassword(ctx context.Context, db *sql.DB, username, password, expectedHa
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE admin_user SET password_hash=? WHERE username=? AND (?='' OR password_hash=?)`,
-		string(hash), strings.TrimSpace(username), expectedHash, expectedHash)
+	res, err := tx.ExecContext(ctx, updateSQL, append([]any{string(hash)}, updateArgs...)...)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrInvalidCredentials
+		return zeroRowsErr
 	}
-	_, err = tx.ExecContext(ctx,
-		`DELETE FROM admin_session WHERE admin_id = (SELECT id FROM admin_user WHERE username=?)`,
-		strings.TrimSpace(username))
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, revokeSQL, revokeArgs...); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -276,31 +289,12 @@ func ListAdmins(ctx context.Context, db *sql.DB) ([]AdminRow, error) {
 
 // SetPasswordByID 按管理员 id 改口令，并吊销该管理员的所有现有会话。
 func SetPasswordByID(ctx context.Context, db *sql.DB, id int64, password string) error {
-	if len(password) < 8 {
-		return errors.New("密码至少 8 位")
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE admin_user SET password_hash=? WHERE id=?`, string(hash), id)
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return ErrNoTarget
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM admin_session WHERE admin_id=?`, id); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return setPasswordFor(ctx, db, password,
+		`UPDATE admin_user SET password_hash=? WHERE id=?`,
+		[]any{id},
+		`DELETE FROM admin_session WHERE admin_id=?`,
+		[]any{id},
+		ErrNoTarget)
 }
 
 // Delete 删除管理员：不允许删自己；不允许删掉最后一个超管；目标不存在报
