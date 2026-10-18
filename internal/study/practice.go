@@ -94,6 +94,9 @@ func (s *Service) CreateSession(ctx context.Context, user int64, kind string, sp
 	}
 	ids := []int64{}
 	if len(spec.QuestionIDs) > 0 {
+		if kind == "paperset" {
+			return Session{}, ErrInvalid
+		}
 		seen := map[int64]bool{}
 		for _, id := range spec.QuestionIDs {
 			if seen[id] || id <= 0 {
@@ -158,13 +161,16 @@ func (s *Service) CreateSession(ctx context.Context, user int64, kind string, sp
 	var id int64
 	err := store.WriteTx(ctx, s.DB, func(tx *sql.Tx) error {
 		today := QuotaDay(s.clockNow())
-		var role string
+		var role, status string
 		var expires sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT role,vip_expires_at FROM app_user WHERE id=?`, user).Scan(&role, &expires); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT role,vip_expires_at,status FROM app_user WHERE id=?`, user).Scan(&role, &expires, &status); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
+		}
+		if status == "banned" {
+			return ErrCredentials
 		}
 		if !(role == "vip" && (!expires.Valid || expires.String >= today)) {
 			questions, papers := DefaultFreeQuestions, DefaultFreePapers

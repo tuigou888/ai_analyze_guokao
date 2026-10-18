@@ -215,6 +215,16 @@ func (s *Service) LoginWithMetadata(ctx context.Context, username, password stri
 		if _, e := tx.ExecContext(ctx, `DELETE FROM app_session WHERE expires_at<=?`, timestamp.Format(time.RFC3339)); e != nil {
 			return e
 		}
+		var st string
+		if e := tx.QueryRowContext(ctx, `SELECT status FROM app_user WHERE id=?`, u.ID).Scan(&st); e != nil {
+			if errors.Is(e, sql.ErrNoRows) {
+				return ErrCredentials
+			}
+			return e
+		}
+		if st == "banned" {
+			return ErrBanned
+		}
 		res, e := tx.ExecContext(ctx, `INSERT INTO app_session(token,user_id,expires_at,public_id,created_at,device_label,ip_hint) SELECT ?,id,?,?,?,?,? FROM app_user WHERE id=? AND password_hash=?`, tokenHash(token), timestamp.Add(SessionTTL).Format(time.RFC3339), publicID, timestamp.Format(time.RFC3339), device, ip, u.ID, hash)
 		if e != nil {
 			return e

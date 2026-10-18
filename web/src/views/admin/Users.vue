@@ -12,7 +12,7 @@ const notice = ref('')
 const vip = ref(null)
 
 function date(s){return s?new Date(s).toLocaleString('zh-CN',{hour12:false}):'—'}
-function vipExpires(u){return u.role==='vip'?(u.vip_expires_at||'长期'):'—'}
+function vipExpires(u){if(u.vip_expires_at)return u.vip_expires_at;return u.role==='vip'?'长期':'—'}
 
 async function load(p=1){
   page.value=p;busy.value=true;error.value=''
