@@ -106,6 +106,10 @@ func (s *Server) Routes() http.Handler {
 			r.Put("/admin/settings", s.handlePutSettings)
 			r.Post("/admin/test-llm", s.handleTestLLM)
 			r.Post("/admin/test-mail", s.handleTestMail)
+			r.Get("/admin/admins", s.handleAdminListAdmins)
+			r.Post("/admin/admins", s.handleAdminCreate)
+			r.Put("/admin/admins/{id}/password", s.handleAdminResetAdminPassword)
+			r.Delete("/admin/admins/{id}", s.handleAdminDelete)
 		})
 	})
 
