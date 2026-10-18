@@ -113,7 +113,7 @@ func cmdAdmin(args []string) error {
 		fmt.Print(`gk admin —— 管理入口账号
 
 用法:
-  gk admin create --user <用户名> [--password <密码>]   创建管理员
+  gk admin create --user <用户名> [--password <密码>] [--role super|operator]   创建管理员（缺省 super）
   gk admin passwd --user <用户名> [--password <密码>]   修改口令（会吊销所有旧会话）
 
 选项:
@@ -127,6 +127,7 @@ func cmdAdmin(args []string) error {
 	dbFile := fs.String("db", "var/db/gk.sqlite", "数据库路径")
 	user := fs.String("user", "admin", "用户名")
 	password := fs.String("password", "", "密码（不传则交互输入）")
+	role := fs.String("role", "super", "角色 super|operator")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -148,7 +149,7 @@ func cmdAdmin(args []string) error {
 
 	switch sub {
 	case "create":
-		if err := admin.Create(ctx, db, *user, pw); err != nil {
+		if err := admin.Create(ctx, db, *user, pw, *role); err != nil {
 			return err
 		}
 		fmt.Printf("已创建管理员 %s\n下一步: gk serve，然后访问 /admin 填写 API 地址与密钥\n", *user)
