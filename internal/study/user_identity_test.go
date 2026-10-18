@@ -73,7 +73,7 @@ func TestBannedAndEffectiveRole(t *testing.T) {
 		t.Fatalf("banned session verify: got %v, want ErrCredentials", err)
 	}
 
-	// 3. 会员已过期：Role 回落 free，到期日原样保留。
+	// 3. 会员已过期：Role 回落 free，到期日原样保留；前一天到期同样回落。
 	expiredID := seedUser("vip_expired", "vip", "2026-10-10", "active")
 	expiredToken := "vip-expired-token-0123456789abcd"
 	seedSession(expiredID, expiredToken)
@@ -84,8 +84,18 @@ func TestBannedAndEffectiveRole(t *testing.T) {
 	if u.Role != "free" || u.VipExpiresAt != "2026-10-10" {
 		t.Fatalf("expired vip verify: %+v", u)
 	}
+	yesterdayID := seedUser("vip_yesterday", "vip", "2026-10-15", "active")
+	yesterdayToken := "vip-yesterday-token-0123456789ab"
+	seedSession(yesterdayID, yesterdayToken)
+	u, err = s.Verify(ctx, yesterdayToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Role != "free" || u.VipExpiresAt != "2026-10-15" {
+		t.Fatalf("yesterday-expiry vip verify: %+v", u)
+	}
 
-	// 4. 未到期 vip 与长期 vip（NULL 到期）。
+	// 4. 未到期 vip、到期日当天 vip 与长期 vip（NULL 到期）。
 	activeID := seedUser("vip_active", "vip", "2026-10-20", "active")
 	activeToken := "vip-active-token-0123456789abcde"
 	seedSession(activeID, activeToken)
@@ -95,6 +105,16 @@ func TestBannedAndEffectiveRole(t *testing.T) {
 	}
 	if u.Role != "vip" || u.VipExpiresAt != "2026-10-20" {
 		t.Fatalf("active vip verify: %+v", u)
+	}
+	todayID := seedUser("vip_today", "vip", "2026-10-16", "active")
+	todayToken := "vip-today-token-0123456789abcde"
+	seedSession(todayID, todayToken)
+	u, err = s.Verify(ctx, todayToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Role != "vip" || u.VipExpiresAt != "2026-10-16" {
+		t.Fatalf("same-day expiry vip verify: %+v", u)
 	}
 	foreverID := seedUser("vip_forever", "vip", "", "active")
 	foreverToken := "vip-forever-token-0123456789abcd"

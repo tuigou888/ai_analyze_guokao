@@ -46,14 +46,14 @@ type User struct {
 	VipExpiresAt string `json:"vip_expires_at,omitempty"`
 }
 
-var examZone = time.FixedZone("Asia/Shanghai", 8*60*60)
+var ExamZone = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 func (s *Service) today() string {
-	return s.clockNow().In(examZone).Format("2006-01-02")
+	return s.clockNow().In(ExamZone).Format("2006-01-02")
 }
 
 func effectiveRole(role, expires, today string) string {
-	if role == "vip" && expires != "" && expires <= today {
+	if role == "vip" && expires != "" && expires < today {
 		return "free"
 	}
 	return role
