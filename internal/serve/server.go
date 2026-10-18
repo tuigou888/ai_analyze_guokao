@@ -6,6 +6,7 @@
 package serve
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"mime"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -44,7 +46,24 @@ type Server struct {
 
 // New 构造服务。
 func New(settings *setting.Store, db *sql.DB, assets fs.FS) *Server {
-	return &Server{Settings: settings, DB: db, Log: slog.Default(), Assets: assets, Study: &study.Service{DB: db}}
+	s := &Server{Settings: settings, DB: db, Log: slog.Default(), Assets: assets, Study: &study.Service{DB: db}}
+	// 免费额度从配置读：解析失败或 ≤0 视作未配置，回落 study 默认。
+	s.Study.Quota = func(ctx context.Context) (int, int) {
+		positive := func(key string, fallback int) int {
+			v, err := settings.Get(ctx, key)
+			if err != nil {
+				return fallback
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n <= 0 {
+				return fallback
+			}
+			return n
+		}
+		return positive(setting.KeyDailyFreeQuestions, study.DefaultFreeQuestions),
+			positive(setting.KeyDailyFreePapers, study.DefaultFreePapers)
+	}
+	return s
 }
 
 // Routes 组装路由。

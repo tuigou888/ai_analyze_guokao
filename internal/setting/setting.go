@@ -41,6 +41,10 @@ const (
 	KeyMaxRetries  = "llm.max_retries"
 	KeyDailyBudget = "llm.daily_budget_usd" // AI 成本闸门（§8.6 约束 6）
 
+	// 免费用户每日额度。解析失败或 ≤0 视为未配置，回落 study 的代码默认。
+	KeyDailyFreeQuestions = "user.daily_free_questions"
+	KeyDailyFreePapers    = "user.daily_free_papers"
+
 	// 邮件服务（注册验证码）。未配置 host/port/from 时走开发降级：验证码只打印日志。
 	KeySMTPHost     = "mail.smtp_host"
 	KeySMTPPort     = "mail.smtp_port"
@@ -64,6 +68,9 @@ var Defaults = map[string]string{
 	KeySMTPPort:    "",
 	KeySMTPUser:    "",
 	KeyMailFrom:    "",
+
+	KeyDailyFreeQuestions: "50",
+	KeyDailyFreePapers:    "3",
 }
 
 // Store 读写配置。

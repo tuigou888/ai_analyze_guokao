@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"ai_analyze_guokao/internal/store"
 	"ai_analyze_guokao/internal/study"
@@ -50,6 +51,9 @@ func (s *Server) studyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, study.ErrTooFrequent):
 		w.Header().Set("Retry-After", "60")
 		writeErr(w, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, study.ErrQuotaExceeded):
+		w.Header().Set("Retry-After", strconv.FormatInt(s.secondsUntilTomorrow(), 10))
+		writeErr(w, http.StatusTooManyRequests, err.Error())
 	case errors.Is(err, study.ErrEmailConflict):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, study.ErrInvalid):
@@ -65,6 +69,17 @@ func (s *Server) studyError(w http.ResponseWriter, err error) {
 	default:
 		s.fail(w, "操作失败，请稍后重试", err)
 	}
+}
+
+// secondsUntilTomorrow 返回到考试时区次日零点的秒数，供额度耗尽的
+// Retry-After 用。固定 Clock 时结果可精确断言。
+func (s *Server) secondsUntilTomorrow() int64 {
+	now := time.Now()
+	if s.Study != nil && s.Study.Clock != nil {
+		now = s.Study.Clock()
+	}
+	y, m, d := now.In(study.ExamZone).Date()
+	return int64(time.Date(y, m, d+1, 0, 0, 0, 0, study.ExamZone).Sub(now).Seconds())
 }
 func (s *Server) respond(w http.ResponseWriter, v any, err error) {
 	if err != nil {
