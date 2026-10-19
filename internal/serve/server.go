@@ -146,6 +146,17 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "未登录或会话已过期")
 			return
 		}
+		// 身份互斥：gk_admin 与 gk_user 同域共存，管理端权限不得在仍持有有效
+		// 用户会话的浏览器上行使——否则"先登管理端、再登普通用户"的浏览器能以
+		// 用户身份直接进管理台。Verify 报 ErrCredentials（无 cookie/过期/封禁）
+		// 视为无用户身份放行；其余错误按故障关闭处理。
+		if _, uerr := s.Study.Verify(r.Context(), cookieToken(r, userCookie)); uerr == nil {
+			writeErr(w, http.StatusUnauthorized, "当前浏览器仍持有用户登录，请先退出用户身份")
+			return
+		} else if !errors.Is(uerr, study.ErrCredentials) {
+			s.fail(w, "读取用户会话失败", uerr)
+			return
+		}
 		r.Header.Set("X-Admin-User", name)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminRoleKey{}, role)))
 	})
@@ -188,6 +199,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		s.fail(w, "登录失败", err)
 		return
+	}
+	// 身份切换：登管理端即吊销本浏览器携带的用户会话并清除其 cookie，保证
+	// 一个浏览器同一时刻只有一个身份。与 requireAdmin 的互斥检查配套：即使
+	// 这里吊销失败，管理接口仍会被互斥检查拒绝——失败方向是关闭的。
+	if uc := cookieToken(r, userCookie); uc != "" {
+		if err := s.Study.Logout(r.Context(), uc); err != nil {
+			s.fail(w, "切换身份失败", err)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: userCookie, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/",

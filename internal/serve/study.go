@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"ai_analyze_guokao/internal/admin"
 	"ai_analyze_guokao/internal/store"
 	"ai_analyze_guokao/internal/study"
 	"github.com/go-chi/chi/v5"
@@ -252,6 +253,15 @@ func (s *Server) userLogin(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		s.studyError(w, e)
 		return
+	}
+	// 对称的身份切换：登用户端即吊销本浏览器携带的管理员会话并清除其 cookie，
+	// 避免浏览器同时持有双身份（管理端权限会被 requireAdmin 的互斥检查拒绝）。
+	if ac := cookieToken(r, sessionCookie); ac != "" {
+		if e := admin.Logout(r.Context(), s.DB, ac); e != nil {
+			s.fail(w, "切换身份失败", e)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", HttpOnly: true, Secure: true, MaxAge: -1})
 	}
 	http.SetCookie(w, &http.Cookie{Name: userCookie, Value: token, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: int(study.SessionTTL.Seconds())})
 	writeJSON(w, 200, u)
