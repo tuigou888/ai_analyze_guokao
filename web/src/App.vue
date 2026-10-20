@@ -2,6 +2,7 @@
 import { useRoute, useRouter } from 'vue-router'
 import { auth, clearUser } from './auth'
 import { api, forUser } from './api'
+import ToastHost from './components/ToastHost.vue'
 import { ref, watch } from 'vue'
 const route = useRoute(), router = useRouter(), error = ref(''), currentView = ref(null)
 watch(() => route.fullPath, () => { error.value = '' })
@@ -22,6 +23,7 @@ async function logout() {
 </script>
 <template>
   <a href="#main" class="skip">跳到正文</a>
+  <ToastHost />
   <RouterView v-if="route.meta.public" />
   <div v-else class="app-shell">
     <aside class="sidebar">
