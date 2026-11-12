@@ -27,3 +27,6 @@ web/node_modules/
 # 隔离工作树与 superpowers SDD 工作区（账本/简报/审查包）
 .worktrees/
 .superpowers/
+
+# Claude Code 本地权限配置
+.claude/settings.local.json
