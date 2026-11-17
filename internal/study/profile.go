@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -109,9 +108,16 @@ func (s *Service) validateExamDate(value, original string) error {
 }
 
 func (s *Service) UpdateProfile(ctx context.Context, user int64, in ProfileUpdate) (Profile, error) {
-	in.Nickname = strings.TrimSpace(in.Nickname)
-	in.Bio = strings.TrimSpace(in.Bio)
-	in.ExamName = strings.TrimSpace(in.ExamName)
+	var ok bool
+	if in.Nickname, ok = sanitizeText(in.Nickname); !ok {
+		return Profile{}, ErrInvalid
+	}
+	if in.Bio, ok = sanitizeText(in.Bio); !ok {
+		return Profile{}, ErrInvalid
+	}
+	if in.ExamName, ok = sanitizeText(in.ExamName); !ok {
+		return Profile{}, ErrInvalid
+	}
 	if err := s.validateProfile(ctx, in); err != nil {
 		return Profile{}, err
 	}

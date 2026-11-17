@@ -231,7 +231,12 @@ func (s *Store) GetMasked(ctx context.Context, key string) (value string, set bo
 }
 
 // Set 写配置。isSecretKey 判定为敏感的键会加密后再存。
+//
+// 只接受白名单内的键：配置表不接受任意键写入（安全审计 M-1）。
 func (s *Store) Set(ctx context.Context, key, value, by string) error {
+	if !IsKnownKey(key) {
+		return fmt.Errorf("%w: %q", ErrUnknownKey, key)
+	}
 	now := time.Now().Format(time.RFC3339)
 	if isSecretKey(key) {
 		enc, err := s.encrypt(value)
@@ -258,6 +263,26 @@ func (s *Store) Set(ctx context.Context, key, value, by string) error {
 // isSecretKey 判断某个键是否为敏感值。
 func isSecretKey(key string) bool {
 	return key == KeyAPIKey || key == KeySMTPPassword
+}
+
+// ErrUnknownKey 表示写入了一个未定义的配置键。配置表只接受白名单内的键：
+// 任意键都能写会让配置表被污染，未来某个键被用作逻辑开关时就成了绕过面
+// （安全审计 M-1）。
+var ErrUnknownKey = errors.New("未知的配置键")
+
+// KnownKeys 是所有受支持的配置键（Defaults 的键 ∪ 无默认值的键）。
+var KnownKeys = map[string]struct{}{
+	KeyBaseURL: {}, KeyAPIKey: {}, KeyModel: {}, KeyModelPricing: {},
+	KeyConcurrency: {}, KeyTimeoutSec: {}, KeyMaxTokens: {}, KeyMaxRetries: {},
+	KeyDailyBudget:        {},
+	KeyDailyFreeQuestions: {}, KeyDailyFreePapers: {},
+	KeySMTPHost: {}, KeySMTPPort: {}, KeySMTPUser: {}, KeySMTPPassword: {}, KeyMailFrom: {},
+}
+
+// IsKnownKey 判断键是否在受支持的白名单内。
+func IsKnownKey(key string) bool {
+	_, ok := KnownKeys[key]
+	return ok
 }
 
 func (s *Store) encrypt(plain string) ([]byte, error) {
@@ -317,6 +342,10 @@ func (s *Store) All(ctx context.Context) (map[string]string, error) {
 		var isSecret int
 		if err := rows.Scan(&key, &value, &secret, &isSecret); err != nil {
 			return nil, err
+		}
+		// 历史脏数据（升级前写入的任意键）也一并过滤：读取接口只回显已知键。
+		if !IsKnownKey(key) {
+			continue
 		}
 		if isSecret == 1 {
 			if len(secret) > 0 {

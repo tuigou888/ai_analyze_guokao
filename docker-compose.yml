@@ -21,12 +21,23 @@ services:
       - --secret-key-file=/opt/gk/var/secret.key
       - --addr=0.0.0.0:8080
       - "--public-origin=https://${DOMAIN:?请复制 deploy/.env.example 为 .env 并填写 DOMAIN}"
+      # 容器内 RemoteAddr 恒为 Docker 网关，不信任转发头会让全部用户坍缩到同一个
+      # 限速桶（审计 H-2）。端口只绑定 127.0.0.1，宿主反代是唯一来源，故此网段可信任。
+      - "--trusted-proxies=${GK_TRUSTED_PROXIES:-172.16.0.0/12}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+    # 容器加固（安全审计 L-3）：非 root 已在 Dockerfile 固定为 10001。
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     networks:
       - gk-net
     logging:

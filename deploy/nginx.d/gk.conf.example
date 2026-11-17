@@ -30,6 +30,17 @@ server {
     access_log /var/log/nginx/gk-access.log;
     error_log /var/log/nginx/gk-error.log;
 
+    # 安全响应头（安全审计 M-3）。后端（sameOrigin）已下发 CSP /
+    # Permissions-Policy / HSTS，这里冗余一份以便本 location 的 add_header
+    # 覆盖时不至于丢失；always 保证 4xx/5xx 也带。
+    # add_header 在同一级别出现即覆盖继承值，所以此处必须列全。
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()" always;
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" always;
+
     # 静态资源缓存
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         proxy_pass http://gk_backend;

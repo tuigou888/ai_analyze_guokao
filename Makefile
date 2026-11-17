@@ -1,7 +1,7 @@
 DB   ?= var/db/gk.sqlite
 DATA ?= data
 
-.PHONY: help build test test-short ingest reingest stats fmt vet clean \
+.PHONY: help build test test-short vuln ingest reingest stats fmt vet clean \
         media-index media-ocr media-ocr-text media-backfill media-report media-sample media \
         web web-install serve admin-init config release backup distill-smoke distill-mvp distill-report
 
@@ -13,6 +13,11 @@ build:
 
 test:
 	go test ./...
+
+# 依赖漏洞扫描（安全审计 M-4）。需先安装：
+#   go install golang.org/x/vuln/cmd/govulncheck@latest
+vuln:
+	govulncheck ./...
 
 # 跳过真实数据集扫描的快速回归（CI 上无 data/ 时用这个）
 test-short:

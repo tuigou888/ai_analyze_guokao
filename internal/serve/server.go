@@ -10,20 +10,24 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"ai_analyze_guokao/internal/admin"
 	"ai_analyze_guokao/internal/llm"
+	"ai_analyze_guokao/internal/netguard"
 	"ai_analyze_guokao/internal/setting"
 	"ai_analyze_guokao/internal/study"
 )
@@ -42,6 +46,9 @@ type Server struct {
 	DataDir        string
 	TrustedProxies []netip.Prefix
 	PublicOrigin   string
+	// AllowPrivateOutbound 允许 LLM/SMTP 目标指向内网地址（自部署常见）。
+	// 默认 false：管理端可改出站地址，若不加限制就成了内网探测原语（M-2）。
+	AllowPrivateOutbound bool
 }
 
 // New 构造服务。
@@ -73,6 +80,12 @@ func (s *Server) Routes() http.Handler {
 	r.Use(s.sameOrigin)
 	r.Use(newAuthLimiter(s.TrustedProxies...).middleware)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		// 只对回环/可信代理返回真实状态：503 与固定 200 的差异可用于探测
+		// 后端可用性（安全审计 L-4）。外部访客一律 200，不泄露数据库状态。
+		if !s.healthDetailAllowed(r) {
+			writeJSON(w, 200, map[string]any{"ok": true})
+			return
+		}
 		if err := s.DB.PingContext(r.Context()); err != nil {
 			writeErr(w, 503, "数据库不可用")
 			return
@@ -173,6 +186,22 @@ func (s *Server) requireRole(next http.Handler) http.Handler {
 	})
 }
 
+// healthDetailAllowed 只对回环开放详细健康状态。两条部署路线的自检都走
+// 本机回环（Compose healthcheck 在容器内 curl localhost；systemd 路线 curl
+// 127.0.0.1），因此不需要放行可信代理网段——否则容器路线下所有经反代的
+// 请求都会被判为"可信"，L-4 的收敛就失效了。
+func (s *Server) healthDetailAllowed(r *http.Request) bool {
+	h, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(h)
+	if err != nil {
+		return false
+	}
+	return ip.Unmap().IsLoopback()
+}
+
 func bearer(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if after, ok := strings.CutPrefix(h, "Bearer "); ok {
@@ -250,10 +279,28 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 //
 // 关键行为：值为掩码（•）或 undefined 的敏感项**保持原值**。
 // 否则管理界面每次保存都会把遮蔽显示写回去，把真实 key 抹成乱码。
+// 未知键整批拒绝（安全审计 M-1）：配置表不接受任意键。
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	var in map[string]string
 	if !decode(w, r, &in) {
 		return
+	}
+	for k := range in {
+		if !setting.IsKnownKey(k) {
+			writeErr(w, http.StatusBadRequest, "未知的配置键: "+k)
+			return
+		}
+	}
+	// 出站目标校验（安全审计 M-2）：base_url / smtp_host 会被服务端真实请求，
+	// 保存时先拒绝明显的回环/内网/保留地址；建连时还会按解析后的 IP 再判一次。
+	for k, v := range in {
+		if v == setting.Mask || v == "" {
+			continue
+		}
+		if err := s.checkOutboundSetting(k, v); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	by := r.Header.Get("X-Admin-User")
 	updated := make([]string, 0, len(in))
@@ -286,11 +333,23 @@ func (s *Server) handleTestLLM(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请先填写 API 地址与模型名")
 		return
 	}
+	// 建连时按解析后的 IP 再判一次，挡住"域名解析到内网"的绕过。
+	if err := s.checkOutboundSetting(setting.KeyBaseURL, baseURL); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	client := llm.New(baseURL, apiKey, 0)
+	client.HTTP.Transport = &http.Transport{
+		DialContext:           netguard.ContextDialer(s.AllowPrivateOutbound, 30*time.Second),
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	}
 	respModel, latency, err := client.Ping(ctx, model)
 	if err != nil {
-		// 把不可重试的配置类错误直接透传，便于按提示修正
-		writeErr(w, http.StatusBadGateway, err.Error())
+		// 只回分类化文案：底层错误原文可能泄露内部主机名、网段与端口状态，
+		// 是有效的内网扫描原语（安全审计 M-2）。原文仅写服务端日志。
+		s.Log.Warn("test-llm 失败", "err", err, "base_url", baseURL)
+		writeErr(w, http.StatusBadGateway, outboundErrorText(err))
 		return
 	}
 
@@ -328,6 +387,39 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 func isSecretSetting(key string) bool {
 	return key == setting.KeyAPIKey || key == setting.KeySMTPPassword
+}
+
+// checkOutboundSetting 校验会被服务端主动请求的配置键（安全审计 M-2）。
+// AllowPrivateOutbound 显式打开时跳过（自部署把 LLM/SMTP 放在内网的场景）。
+func (s *Server) checkOutboundSetting(key, value string) error {
+	if s.AllowPrivateOutbound {
+		return nil
+	}
+	switch key {
+	case setting.KeyBaseURL:
+		return netguard.CheckURL(value)
+	case setting.KeySMTPHost:
+		return netguard.CheckHost(value)
+	}
+	return nil
+}
+
+// outboundErrorText 把底层错误压成不含内部拓扑的分类化文案。
+func outboundErrorText(err error) string {
+	if errors.Is(err, netguard.ErrForbiddenTarget) {
+		return "目标地址指向内网或保留网段，已拒绝（如确需访问，请以 --allow-private-outbound 启动）"
+	}
+	var le *llm.Error
+	if errors.As(err, &le) {
+		if le.StatusCode > 0 {
+			return fmt.Sprintf("LLM 网关返回 HTTP %d，请检查 API 地址、密钥与模型名", le.StatusCode)
+		}
+		return "无法连接 LLM 网关，请检查 API 地址与网络"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "LLM 网关响应超时"
+	}
+	return "LLM 连通性检查失败，详情见服务端日志"
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {

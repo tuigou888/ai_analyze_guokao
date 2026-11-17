@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
 
 	_ "modernc.org/sqlite" // 纯 Go 驱动，免 CGO，交叉编译友好
 )
@@ -454,6 +455,14 @@ func Open(path string) (*sql.DB, error) {
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
+	}
+	// 数据库含全部 password_hash 与练习记录，默认 0644 世界可读（安全审计 L-3）。
+	// 只处理真实文件路径；:memory: 与已存在但非文件的 DSN 跳过。
+	if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+		if err := os.Chmod(path, 0o600); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return db, nil
 }

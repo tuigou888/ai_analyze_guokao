@@ -129,6 +129,10 @@ func (s *Service) Search(ctx context.Context, f Filter, mode string) ([]map[stri
 		return nil, err
 	}
 	out := []map[string]any{}
+	// highlights 由服务端生成：把命中词在题干中的位置包成 <mark>，并先做
+	// HTML 转义。不原样回显用户输入——该字段语义是"高亮片段"，前端一旦用
+	// v-html 渲染就成了反射型 XSS（安全审计 L-1）。
+	highlight := searchHighlight(f.Q, f.SearchMode)
 	for _, b := range items.Items {
 		l, err := s.label(ctx, b.ID, false)
 		if err != nil {
@@ -138,7 +142,57 @@ func (s *Service) Search(ctx context.Context, f Filter, mode string) ([]map[stri
 		if l != nil {
 			ter, _ = l["tertiary"].(string)
 		}
-		out = append(out, map[string]any{"question_id": b.ID, "brief": b.Stem, "module": b.Module, "tertiary": ter, "score": 1, "highlights": []string{f.Q}})
+		out = append(out, map[string]any{"question_id": b.ID, "brief": b.Stem, "module": b.Module, "tertiary": ter, "score": 1, "highlights": highlight(b.Stem)})
 	}
 	return out, nil
+}
+
+// escapeHTML 转义文本节点，供 highlights 片段使用。
+func escapeHTML(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#39;").Replace(s)
+}
+
+// searchHighlight 返回一个"给定文本 → 高亮片段列表"的函数。只有关键词模式
+// 且命中时才产出片段；片段本身是转义后的 <mark> 包裹，不含原始输入。
+func searchHighlight(query, mode string) func(string) []string {
+	q := strings.TrimSpace(query)
+	if mode == "concept" || q == "" {
+		return func(string) []string { return []string{} }
+	}
+	needle := strings.ToLower(q)
+	return func(text string) []string {
+		idx := strings.Index(strings.ToLower(text), needle)
+		if idx < 0 {
+			return []string{}
+		}
+		// 以 rune 边界截取上下文，避免切断多字节字符。
+		runes := []rune(text)
+		// 把字节偏移换成 rune 偏移。
+		runeIdx := len([]rune(text[:idx]))
+		start := runeIdx - 20
+		if start < 0 {
+			start = 0
+		}
+		end := runeIdx + len([]rune(q)) + 20
+		if end > len(runes) {
+			end = len(runes)
+		}
+		matchEnd := runeIdx + len([]rune(q))
+		if matchEnd > len(runes) {
+			matchEnd = len(runes)
+		}
+		var b strings.Builder
+		if start > 0 {
+			b.WriteString("…")
+		}
+		b.WriteString(escapeHTML(string(runes[start:runeIdx])))
+		b.WriteString("<mark>")
+		b.WriteString(escapeHTML(string(runes[runeIdx:matchEnd])))
+		b.WriteString("</mark>")
+		b.WriteString(escapeHTML(string(runes[matchEnd:end])))
+		if end < len(runes) {
+			b.WriteString("…")
+		}
+		return []string{b.String()}
+	}
 }

@@ -52,6 +52,9 @@ func fixture(t *testing.T) (*Server, *sql.DB) {
 		}
 	}
 	s := New(settings, db, nil)
+	// 测试里 SMTP/LLM 目标常是本地临时监听端口；生产默认拒绝内网目标（M-2），
+	// 这里显式放行，等价于 `gk serve --allow-private-outbound`。
+	s.AllowPrivateOutbound = true
 	if err = s.Study.RefreshConcepts(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -68,7 +68,11 @@ func tokenHash(token string) string {
 func validPassword(p string) bool { return len(p) >= 8 && len(p) <= 72 }
 func (s *Service) Register(ctx context.Context, username, password, nickname, email, code string) (User, error) {
 	username = strings.TrimSpace(username)
-	nickname = strings.TrimSpace(nickname)
+	sanitized, ok := sanitizeText(strings.TrimSpace(nickname))
+	if !ok {
+		return User{}, errors.Join(ErrInvalid, errors.New("昵称包含不允许的字符"))
+	}
+	nickname = sanitized
 	email = normalizeEmail(email)
 	if utf8.RuneCountInString(username) < 3 || utf8.RuneCountInString(username) > 32 || utf8.RuneCountInString(nickname) > 40 || !validPassword(password) {
 		return User{}, errors.Join(ErrInvalid, errors.New("用户名需 3–32 个字符，密码需 8–72 字节，昵称最多 40 字"))

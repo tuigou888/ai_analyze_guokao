@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -30,6 +31,7 @@ func cmdServe(args []string) error {
 	keyFile := fs.String("secret-key-file", secretKeyFile, "配置加密密钥文件")
 	proxyFlag := fs.String("trusted-proxies", "", "可信代理 CIDR（逗号分隔；默认不信任转发头）")
 	originFlag := fs.String("public-origin", "", "网站完整外部 Origin，例如 https://practice.example.com")
+	allowPrivate := fs.Bool("allow-private-outbound", false, "允许 LLM/SMTP 目标指向内网地址（默认拒绝，防内网探测）")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -79,6 +81,7 @@ func cmdServe(args []string) error {
 	srv.DataDir = *dataDir
 	srv.TrustedProxies = proxies
 	srv.PublicOrigin = publicOrigin
+	srv.AllowPrivateOutbound = *allowPrivate
 	httpSrv := &http.Server{
 		Addr:              *addr,
 		Handler:           srv.Routes(),
@@ -92,6 +95,12 @@ func cmdServe(args []string) error {
 	go func() {
 		fmt.Printf("gk 服务已启动: http://%s\n", *addr)
 		fmt.Println("管理入口: /admin（接口 /api/admin/*）")
+		// 启动自检：反代/容器部署下最常踩的坑是"没配可信代理"，结果所有请求
+		// 的客户端 IP 都坍缩成网关地址，全站共用一个限速桶（安全审计 H-2）。
+		// 这里主动提示，而不是等到有人登录失败才发现。
+		if len(proxies) == 0 && publicOrigin != "" && !isLoopbackAddr(*addr) {
+			fmt.Fprintln(os.Stderr, "提示: 已配置 --public-origin 但未设置 --trusted-proxies；若前方有反向代理或运行在容器内，所有请求的客户端 IP 将坍缩为代理地址。")
+		}
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Fprintln(os.Stderr, "服务异常退出:", err)
 			os.Exit(1)
@@ -106,6 +115,15 @@ func cmdServe(args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(shutdownCtx)
+}
+
+func isLoopbackAddr(addr string) bool {
+	h, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(h)
+	return err == nil && ip.Unmap().IsLoopback()
 }
 
 func cmdAdmin(args []string) error {

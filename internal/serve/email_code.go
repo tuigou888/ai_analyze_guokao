@@ -2,11 +2,13 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"ai_analyze_guokao/internal/mail"
+	"ai_analyze_guokao/internal/netguard"
 	"ai_analyze_guokao/internal/setting"
 )
 
@@ -82,9 +84,25 @@ func (s *Server) handleTestMail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请先在设置中配置 SMTP")
 		return
 	}
+	if err := s.checkOutboundSetting(setting.KeySMTPHost, cfg.Host); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfg.DialContext = netguard.ContextDialer(s.AllowPrivateOutbound, 10*time.Second)
 	start := time.Now()
 	if err := mail.Send(r.Context(), cfg, in.To, "行测研习测试邮件", "这是一封测试邮件，收到即表示邮件服务配置正常。"); err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		// 与 test-llm 一致：错误原文只写日志，响应只给分类化文案，
+		// 避免把内部主机名/端口状态回显成扫描结果（安全审计 M-2）。
+		s.Log.Warn("test-mail 失败", "err", err, "host", cfg.Host)
+		if errors.Is(err, netguard.ErrForbiddenTarget) {
+			writeErr(w, http.StatusBadRequest, "目标地址指向内网或保留网段，已拒绝（如确需访问，请以 --allow-private-outbound 启动）")
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeErr(w, http.StatusBadGateway, "SMTP 服务器响应超时")
+			return
+		}
+		writeErr(w, http.StatusBadGateway, "发送测试邮件失败，请检查 SMTP 主机、端口与凭据（详情见服务端日志）")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "latency_ms": time.Since(start).Milliseconds()})

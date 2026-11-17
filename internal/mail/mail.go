@@ -21,6 +21,9 @@ type Config struct {
 	Username string
 	Password string
 	From     string
+	// DialContext 可选的拨号函数，用于限制目标地址（安全审计 M-2）。
+	// 为空时使用默认 Dialer。
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // Configured 判断是否已配置：主机、端口与发件人缺一不可。
@@ -44,7 +47,11 @@ func Send(ctx context.Context, cfg Config, to, subject, body string) error {
 		return ErrNotConfigured
 	}
 	d := &net.Dialer{}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(cfg.Host, cfg.Port))
+	dial := d.DialContext
+	if cfg.DialContext != nil {
+		dial = cfg.DialContext
+	}
+	conn, err := dial(ctx, "tcp", net.JoinHostPort(cfg.Host, cfg.Port))
 	if err != nil {
 		return fmt.Errorf("连接 SMTP 服务器失败: %w", err)
 	}
