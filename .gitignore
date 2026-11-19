@@ -30,3 +30,6 @@ web/node_modules/
 
 # Claude Code 本地权限配置
 .claude/settings.local.json
+
+# Local UI review screenshots (may contain account information)
+/design-review/

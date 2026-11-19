@@ -118,6 +118,7 @@ func (s *Server) userRoutes(r chi.Router) {
 			v, e := s.Study.Reveal(r.Context(), currentUser(r).ID, pathID(r))
 			s.respond(w, v, e)
 		})
+		r.Get("/papers/progress", s.paperProgress)
 		r.Get("/papers", func(w http.ResponseWriter, r *http.Request) {
 			v, e := s.Study.Papers(r.Context(), study.FilterFrom(r.URL.Query()))
 			s.respond(w, v, e)

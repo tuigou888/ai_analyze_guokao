@@ -61,7 +61,7 @@ p {
 }
 
 h1 {
-  font-size: var(--font-size-display);
+  font-size: var(--font-size-display-small);
   line-height: var(--line-height-heading);
   letter-spacing: -.025em;
   margin-bottom: var(--space-3);
@@ -122,3 +122,5 @@ code {
 .skip:focus {
   top: 10px;
 }
+
+body{font-variant-numeric:tabular-nums} h1,h2,h3{overflow-wrap:anywhere} button:disabled{pointer-events:auto} .small-label{letter-spacing:0} [role="status"]{overflow-wrap:anywhere}

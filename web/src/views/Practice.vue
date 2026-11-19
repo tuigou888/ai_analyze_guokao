@@ -4,6 +4,7 @@ import { useRoute,useRouter,onBeforeRouteLeave,onBeforeRouteUpdate } from 'vue-r
 import { api } from '../api'
 import { auth } from '../auth'
 import RichText from '../components/RichText.vue'
+import OverlayPanel from '../components/OverlayPanel.vue'
 const route=useRoute(),router=useRouter(),session=ref(null),index=ref(0),answers=ref({}),durations=ref({}),busy=ref(true),submitting=ref(false),error=ref(''),saveState=ref(''),favorite=ref(''),warning=ref(false),elapsed=ref(0),conflict=ref(false)
 let at=Date.now(),saveTimer,clock,saveChain=Promise.resolve(),alive=true,editGeneration=0,savedGeneration=0,pendingSaves=0,saveFailed=false
 const question=computed(()=>session.value?.questions?.[index.value]),done=computed(()=>!!session.value?.submitted_at)
@@ -67,16 +68,156 @@ onBeforeRouteLeave(guardNavigation)
 onBeforeRouteUpdate(guardNavigation)
 defineExpose({savePending:async()=>{if(submitting.value)throw new Error('正在提交或加载练习，请完成后再退出');await flush()}})
 onBeforeUnmount(()=>{alive=false;clearTimeout(saveTimer);clearInterval(clock);window.removeEventListener('beforeunload',beforeUnload)})
+const answerMedia = window.matchMedia('(max-width: 1099px)')
+const useDrawer = ref(answerMedia.matches)
+const answersOpen = ref(false)
+const practiceTitles = { single: '专项练习', paperset: '真题作答', concept: '考点练习', wrongbook: '错题复练', favorite: '收藏练习' }
+const timerText = computed(() => [Math.floor(elapsed.value / 60), elapsed.value % 60].map(value => String(value).padStart(2, '0')).join(':'))
+const analysisFields = [
+  ['detail', '考点细节'], ['question_model', '问法模型'], ['reasoning_chain', '推理链'],
+  ['fastest_solution', '最快解法'], ['pitfalls', '易错点'], ['template', '母题抽象'],
+  ['key_features', '题干关键特征'], ['boundary', '适用边界'], ['confusable', '易混考点'],
+  ['typical_ask', '典型提问'], ['doubt', '疑点'],
+]
+const questionResults = computed(() => new Map(session.value?.results?.map(item => [item.question_id, item])))
+function syncAnswerCard(event) {
+  useDrawer.value = event.matches
+  answersOpen.value = false
+}
+function closeAnswerCard() {
+  answersOpen.value = false
+}
+function showQuestion(i) {
+  const changed = i !== index.value
+  go(i)
+  closeAnswerCard()
+  if (changed) window.scrollTo({ top: 0 })
+}
+function closeSubmitConfirmation() {
+  if (!submitting.value) warning.value = false
+}
+onMounted(() => answerMedia.addEventListener('change', syncAnswerCard))
+onBeforeUnmount(() => answerMedia.removeEventListener('change', syncAnswerCard))
 </script>
-<template><p v-if="busy" class="empty" role="status">正在准备练习…</p><p v-if="error" class="notice err" role="alert">{{ error }}</p><div v-if="conflict" class="notice warn" role="alert"><p>本页作答尚未保存，自动保存和交卷已暂停。请记录当前选择，再加载服务器草稿。</p><button :disabled="submitting" @click="reloadDraft">加载已保存草稿</button></div><div v-if="session&&!busy" class="practice-layout pc-reading" :style="{'--pc-reading-size':readingSize+'px'}">
-<section class="practice-main"><div class="practice-header"><div><p class="eyebrow">{{ done ? '练习复盘' : session.kind==='paperset' ? '真题作答' : '专注练习' }}</p><h1>{{ question.module }} <span class="muted">/ {{ index+1 }} <small>共 {{ session.total }} 题</small></span></h1></div><span class="tag">{{ {single:'单选题',multi:'多选题 · 可选多项',judge:'判断题',other:'暂无答案'}[question.answer_type] }}</span></div>
-<div v-if="done" class="score-banner"><strong>{{ session.correct }} <small>/ {{ session.total }}</small></strong><div><h2>本次正确率 {{ Math.round(session.correct/session.total*100) }}%</h2><p>共作答 {{ count }} 题 · 错题已自动收录 · 点击题号查看复盘</p></div></div>
-<article class="question-sheet"><details v-if="question.material_body" class="material" open><summary>阅读材料</summary><RichText :text="question.material_body" /><details v-if="question.material_with_text!==question.material_body"><summary>查看文字识别版本</summary><RichText :text="question.material_with_text" /></details></details>
-<RichText class="question-stem" :text="question.stem" /><details v-if="question.stem_with_text!==question.stem"><summary>查看文字识别版本</summary><RichText :text="question.stem_with_text" /></details>
-<div class="options" :role="question.answer_type==='multi' ? 'group' : 'radiogroup'" aria-label="答案选项"><button v-for="o in question.options" :key="o.label" :class="['option',{selected:selected(o.label),correct:correct(o.label),incorrect:done&&selected(o.label)&&!correct(o.label)}]" :role="question.answer_type==='multi' ? 'checkbox' : 'radio'" :aria-checked="selected(o.label)" :disabled="done||submitting" @click="choose(o.label)"><span class="option-letter">{{ o.label }}</span><RichText :text="o.content" /><span v-if="correct(o.label)" class="answer-status">正确选项</span><span v-else-if="selected(o.label)" class="answer-status">{{ done ? '你的选择' : '已选择' }}</span></button></div>
-<p v-if="done&&!result?.user_answer" class="notice warn">这道题未作答，解析尚未解锁。可重新练习后查看。</p><div v-if="done&&result?.user_answer" class="analysis"><p :class="['result-status',result.is_correct?'ok':'err']">{{ result.is_correct ? '回答正确' : '回答错误' }} · 你的答案 {{ result.user_answer }} · 正确答案 {{ question.answer }}</p><h2>官方解析</h2><RichText :text="question.explanation_with_formula" />
-<details v-if="label?.reasoning_chain" class="label-analysis"><summary>考点归纳与解题方法</summary><p class="row-meta"><span class="tag">{{ label.tertiary }}</span><span>现有标注 · 请结合官方解析判断</span></p><template v-for="[key,title] in [['detail','考点细节'],['question_model','问法模型'],['reasoning_chain','推理链'],['fastest_solution','最快解法'],['pitfalls','易错点'],['template','母题抽象'],['key_features','题干关键特征'],['boundary','适用边界'],['confusable','易混考点'],['typical_ask','典型提问'],['doubt','疑点']]" :key="key"><div v-if="label[key]?.length" class="analysis-field"><h3>{{ title }}</h3><template v-if="Array.isArray(label[key])"><ul><li v-for="(v,i) in label[key]" :key="i"><RichText :text="typeof v==='string'?v:`${v['考点']}：${v['区分信号']}`" /></li></ul></template><RichText v-else :text="label[key]" /></div></template><p class="muted small">标注来源：{{ label.model }} · {{ label.run_id }}</p></details></div>
-<details v-if="question.sources?.length" class="sources"><summary>真题来源（{{ question.sources.length }}）</summary><p v-for="p in question.sources" :key="p.paper_id">{{ p.name }} · {{ p.module }}</p></details>
-</article><div class="practice-actions"><button :disabled="index===0||submitting" @click="go(index-1)">上一题</button><button @click="collect">收藏此题</button><span class="muted" role="status">{{ favorite }}</span><button class="primary" v-if="index<session.total-1" :disabled="submitting" @click="go(index+1)">下一题</button><button class="primary" v-else-if="!done" :disabled="submitting||conflict" @click="submit()">{{ submitting ? '判分中…' : '提交练习' }}</button><button class="primary" v-else @click="again">再练一次</button></div></section>
-<aside class="practice-aside"><section class="panel answer-card"><div class="panel-heading"><h2>答题卡</h2><span class="mono">{{ String(Math.floor(elapsed/60)).padStart(2,'0') }}:{{ String(elapsed%60).padStart(2,'0') }}</span></div><p class="muted">已作答 {{ count }} / {{ session.total }}</p><div class="progress" :aria-label="`已完成 ${progress}%`"><span :style="{width:progress+'%'}" /></div><div class="question-index"><button v-for="(id,i) in session.question_ids" :key="id" :disabled="submitting" :aria-label="`第 ${i+1} 题${answers[id] ? '，已作答' : '，未作答'}`" :aria-current="i===index ? 'step' : undefined" :class="{active:i===index,answered:answers[id],wrong:done&&session.results?.find(r=>r.question_id===id)?.is_correct===false}" @click="go(i)">{{ i+1 }}</button></div><p class="small muted" role="status">{{ saveState }}</p><button v-if="!done" class="primary wide" :disabled="submitting||conflict" @click="submit()">{{ submitting ? '正在判分…' : '提交练习' }}</button><div v-if="warning" class="notice warn" role="alert"><p>还有 {{ session.total-count }} 题未作答。未作答题计为错误，解析保持未解锁。</p><button :disabled="submitting||conflict" @click="submit(true)">仍然交卷</button><button @click="warning=false">继续作答</button></div><RouterLink v-if="done" class="subtle-link" to="/records">查看学习记录</RouterLink></section><p class="desk-note">先给自己一个答案，<br>再和解析一起复盘。</p></aside>
-</div><div v-else-if="!busy" class="empty"><RouterLink to="/questions">返回题库，开始一份练习</RouterLink></div></template>
+<template>
+  <p v-if="busy" class="empty" role="status">正在准备练习…</p>
+  <p v-if="error" class="notice err practice-notice" role="alert">{{ error }}</p>
+  <div v-if="conflict" class="notice warn practice-notice" role="alert">
+    <p>本页作答尚未保存，自动保存和交卷已暂停。请记录当前选择，再加载服务器草稿。</p>
+    <button :disabled="submitting" @click="reloadDraft">加载已保存草稿</button>
+  </div>
+
+  <div v-if="session && question && !busy" :class="['practice-layout pc-reading', { 'practice-with-drawer': useDrawer }]" :style="{ '--pc-reading-size': readingSize + 'px' }">
+    <section class="practice-main">
+      <header class="practice-header">
+        <div>
+          <h1>{{ done ? '练习复盘' : practiceTitles[session.kind] || '练习' }}</h1>
+          <p class="muted">{{ question.module }} <span aria-hidden="true">·</span> 第 {{ index + 1 }} / {{ session.total }} 题</p>
+        </div>
+        <div class="practice-timer"><span>{{ done ? '用时' : '已用时' }}</span><strong>{{ timerText }}</strong></div>
+      </header>
+      <div class="practice-progress">
+        <div>
+          <span>已作答 {{ count }} / {{ session.total }}</span>
+          <span class="muted" role="status">{{ saveState }}</span>
+        </div>
+        <div class="progress" role="progressbar" aria-label="作答进度" :aria-valuenow="count" :aria-valuemax="session.total"><span :style="{ width: progress + '%' }" /></div>
+      </div>
+      <div v-if="done" class="score-banner">
+        <strong>{{ session.correct }} <small>/ {{ session.total }}</small></strong>
+        <div><h2>本次正确率 {{ Math.round(session.correct / session.total * 100) }}%</h2><p>共作答 {{ count }} 题，错题已自动收录</p></div>
+      </div>
+
+      <article class="question-sheet">
+        <p class="row-meta"><span class="tag">{{ { single: '单选题', multi: '多选题 · 可选多项', judge: '判断题', other: '暂无答案' }[question.answer_type] }}</span></p>
+        <details v-if="question.material_body" class="material" open>
+          <summary>阅读材料</summary>
+          <RichText :text="question.material_body" />
+          <details v-if="question.material_with_text !== question.material_body">
+            <summary>查看文字识别版本</summary>
+            <RichText :text="question.material_with_text" />
+          </details>
+        </details>
+        <RichText class="question-stem" :text="question.stem" />
+        <details v-if="question.stem_with_text !== question.stem">
+          <summary>查看文字识别版本</summary>
+          <RichText :text="question.stem_with_text" />
+        </details>
+
+        <div class="options" :role="question.answer_type === 'multi' ? 'group' : 'radiogroup'" aria-label="答案选项">
+          <button v-for="option in question.options" :key="option.label"
+            :class="['option', { selected: selected(option.label), correct: correct(option.label), incorrect: done && selected(option.label) && !correct(option.label) }]"
+            :role="question.answer_type === 'multi' ? 'checkbox' : 'radio'" :aria-checked="selected(option.label)" :disabled="done || submitting" @click="choose(option.label)">
+            <span class="option-letter">{{ option.label }}</span>
+            <RichText :text="option.content" />
+            <span v-if="correct(option.label)" class="answer-status">正确选项</span>
+            <span v-else-if="selected(option.label)" class="answer-status">{{ done ? '你的选择' : '已选择' }}</span>
+          </button>
+        </div>
+
+        <p v-if="done && !result?.user_answer" class="notice warn">这道题未作答，解析尚未解锁。可重新练习后查看。</p>
+        <div v-if="done && result?.user_answer" class="analysis">
+          <p :class="['result-status', result.is_correct ? 'ok' : 'err']">{{ result.is_correct ? '回答正确' : '回答错误' }} · 你的答案 {{ result.user_answer }} · 正确答案 {{ question.answer }}</p>
+          <h2>官方解析</h2>
+          <RichText :text="question.explanation_with_formula" />
+          <details v-if="label?.reasoning_chain" class="label-analysis">
+            <summary>考点归纳与解题方法</summary>
+            <p class="row-meta"><span class="tag">{{ label.tertiary }}</span><span>现有标注 · 请结合官方解析判断</span></p>
+            <template v-for="[key, title] in analysisFields" :key="key">
+              <div v-if="label[key]?.length" class="analysis-field">
+                <h3>{{ title }}</h3>
+                <ul v-if="Array.isArray(label[key])">
+                  <li v-for="(value, i) in label[key]" :key="i"><RichText :text="typeof value === 'string' ? value : value['考点'] + '：' + value['区分信号']" /></li>
+                </ul>
+                <RichText v-else :text="label[key]" />
+              </div>
+            </template>
+            <p class="muted small">标注来源：{{ label.model }} · {{ label.run_id }}</p>
+          </details>
+        </div>
+        <details v-if="question.sources?.length" class="sources">
+          <summary>真题来源（{{ question.sources.length }}）</summary>
+          <p v-for="paper in question.sources" :key="paper.paper_id">{{ paper.name }} · {{ paper.module }}</p>
+        </details>
+        <div class="practice-collect">
+          <button class="text-button" @click="collect">收藏此题</button>
+          <span class="muted small" role="status">{{ favorite }}</span>
+        </div>
+      </article>
+
+      <div class="practice-actions" aria-label="练习操作" role="group">
+        <button :disabled="index === 0 || submitting" @click="showQuestion(index - 1)">上一题</button>
+        <button v-if="index < session.total - 1" class="primary" :disabled="submitting" @click="showQuestion(index + 1)">下一题</button>
+        <button v-if="!done" :class="{ primary: index === session.total - 1 }" :disabled="submitting || conflict" @click="submit()">{{ submitting ? '判分中…' : '提交练习' }}</button>
+        <button v-else-if="index === session.total - 1" class="primary" @click="again">再练一次</button>
+        <button v-if="useDrawer" class="practice-open-card" type="button" aria-haspopup="dialog" @click="answersOpen = true">答题卡</button>
+      </div>
+    </section>
+
+    <component :is="useDrawer ? OverlayPanel : 'aside'"
+      v-bind="useDrawer ? { open: answersOpen, title: '答题卡', drawer: true, onClose: closeAnswerCard } : { class: 'practice-aside' }">
+      <section class="answer-card practice-answer-card" aria-label="答题卡">
+        <h2 v-if="!useDrawer">答题卡</h2>
+        <p class="muted">已作答 {{ count }} / {{ session.total }}</p>
+        <div class="question-index">
+          <button v-for="(id, i) in session.question_ids" :key="id" :disabled="submitting"
+            :aria-label="'第 ' + (i + 1) + ' 题，' + (answers[id] ? (done ? (questionResults.get(id)?.is_correct ? '正确' : '错误') : '已作答') : '未作答')"
+            :aria-current="i === index ? 'step' : undefined"
+            :class="{ active: i === index, answered: answers[id], wrong: done && questionResults.get(id)?.is_correct === false }"
+            @click="showQuestion(i)">{{ i + 1 }}</button>
+        </div>
+        <RouterLink v-if="done" class="subtle-link" to="/records">查看学习记录</RouterLink>
+      </section>
+    </component>
+  </div>
+  <div v-else-if="!busy" class="empty"><RouterLink to="/questions">返回题库</RouterLink></div>
+
+  <OverlayPanel :open="warning" title="确认提交练习" @close="closeSubmitConfirmation">
+    <p v-if="session">还有 {{ session.total - count }} 题未作答。未作答题将计为错误，解析保持锁定。</p>
+    <p v-if="warning && error" class="notice err" role="alert">{{ error }}</p>
+    <div class="dialog-actions">
+      <button :disabled="submitting" @click="closeSubmitConfirmation">继续作答</button>
+      <button class="primary" :disabled="submitting || conflict" @click="submit(true)">{{ submitting ? '判分中…' : '仍然交卷' }}</button>
+    </div>
+  </OverlayPanel>
+</template>

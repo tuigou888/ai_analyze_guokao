@@ -3,7 +3,7 @@ import { api } from '../api'
 import { auth, clearUser, setUser, loadProfile } from '../auth'
 const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (to, from, savedPosition) => savedPosition || ({ top: 0 }),
   routes: [
     { path: '/', redirect: '/questions' },
     { path: '/login', component: () => import('../views/Login.vue'), meta: { public: true } },
@@ -21,15 +21,22 @@ const router = createRouter({
     { path: '/:pathMatch(.*)*', component: () => import('../views/NotFound.vue'), meta: { public: true } },
   ],
 })
-router.beforeEach(async to => {
+router.beforeEach(async (to, from) => {
   document.title = `${to.meta.title || '登录'} · 行测研习`
   if (to.meta.public) return true
+  if (!to.meta.admin && to.path === from.path && to.path !== '/practice') {
+    // Keep the mounted account form bound to its original identity.
+    if (to.path === '/account' && auth.user?.id) return true
+    if (auth.identityChanged && ['/papers', '/concepts'].includes(to.path)) return false
+    if (!auth.identityChanged && auth.user?.id) return true
+  }
   try {
     if (to.meta.admin) auth.admin = await api.me()
     else { setUser(await api.userMe()); await loadProfile().catch(e => { if(e.status === 401) throw e }) }
   } catch (e) {
     if (e.status !== 401) throw e
-    if (!to.meta.admin) clearUser()
+    if (to.meta.admin) auth.admin = null
+    else clearUser()
     return { path: to.meta.admin ? '/admin/login' : '/login', query: { redirect: to.fullPath } }
   }
 })

@@ -1,32 +1,52 @@
 /* Shared visual standards: semantic palette, type scale, spacing and shape. */
 :root {
+  --brand-600: #285DA8;
+  --brand-700: #204F92;
+  --brand-50: #EAF2FF;
+  --surface-page: #F4F7FB;
+  --surface-sidebar: #EDF3FA;
+  --surface-card: #FFFFFF;
+  --text-primary: #172B4D;
+  --text-secondary: #64748B;
+  --text-muted: #7C8DA5;
+  --border-default: #DBE4F0;
+  --positive: #16816A;
+  --caution: #B7791F;
+  --danger: #C43C47;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --sidebar-width: 224px;
+  --topbar-height: 64px;
+  --content-max-width: 1360px;
+
   /* Core surfaces and text */
-  --color-page: #f2f5f9;
-  --color-surface: #fff;
+  --color-page: var(--surface-page);
+  --color-surface: var(--surface-card);
   --color-surface-subtle: #f4f7fb;
   --color-surface-raised: #f5f8fc;
   --color-surface-data: #f6f8fc;
   --color-surface-glow: #f5f9ff;
   --color-surface-brand: #e6eef9;
-  --color-border: #dce4ef;
+  --color-border: var(--border-default);
   --color-border-subtle: #ccd9e9;
   --color-border-hover: #9cb4d2;
-  --color-text: #20324b;
+  --color-text: var(--text-primary);
   --color-text-muted: #58697f;
   --color-text-subtle: #60728b;
   --color-placeholder: #718098;
 
   /* Brand and interaction */
-  --color-primary: #215eac;
-  --color-primary-hover: #174e94;
-  --color-primary-soft: #e7f0fd;
+  --color-primary: var(--brand-600);
+  --color-primary-hover: var(--brand-700);
+  --color-primary-soft: var(--brand-50);
   --color-primary-muted: #4774aa;
   --color-primary-mid: #4279ba;
   --color-primary-border: #aec8ec;
   --color-primary-focus: #327acb;
   --color-primary-selected: #eff5fe;
   --color-border-hover-soft: #84a9d6;
-  --color-nav-surface: #eef3fa;
+  --color-nav-surface: var(--surface-sidebar);
   --color-nav-hover: #e3ebf7;
   --color-nav-active: #dae7fa;
   --color-nav-active-text: #184f95;
@@ -153,13 +173,13 @@
   --space-16: 64px;
 
   /* Shared shape, focus, motion and elevation */
-  --radius-small: 4px;
+  --radius-small: var(--radius-sm);
   --radius-control: 8px;
-  --radius-panel: 12px;
+  --radius-panel: var(--radius-lg);
   --radius-avatar-large: 22px;
   --radius-avatar-compact: 16px;
   --radius-round: 999px;
-  --control-height: 46px;
+  --control-height: 42px;
   --button-height: 42px;
   --border-width: 1px;
   --border-width-strong: 2px;

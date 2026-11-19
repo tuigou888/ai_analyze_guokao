@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "test:ui": "node scripts/ui-regression.mjs",
+    "test": "node tests/paper-progress.test.mjs"
   },
   "dependencies": {
     "katex": "^0.16.47",

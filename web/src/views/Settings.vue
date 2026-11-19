@@ -16,7 +16,6 @@ const active = ref(sections[0].id)
 
 const form = reactive({
   'llm.base_url': '',
-  'llm.api_key': '',
   'llm.model': '',
   'llm.concurrency': '1',
   'llm.timeout_sec': '120',
@@ -25,13 +24,13 @@ const form = reactive({
   'mail.smtp_host': '',
   'mail.smtp_port': '',
   'mail.smtp_user': '',
-  'mail.smtp_password': '',
   'mail.from': '',
   'user.daily_free_questions': '50',
   'user.daily_free_papers': '3',
 })
 
 const loading = ref(true)
+const loadError = ref('')
 const saving = ref(false)
 const testing = ref(false)
 const keyIsSet = ref(false)
@@ -39,58 +38,63 @@ const mailKeyIsSet = ref(false)
 const mailTestTo = ref('')
 const mailTesting = ref(false)
 
-// 后端把已保存的密钥以掩码返回。提交时必须原样送回，
-// 后端会用「等于掩码就保持原值」的规则避免把它写成字面量掩码。
-const keyPlaceholder = computed(() => (keyIsSet.value ? '已保存（留空或保持不变即可）' : '尚未设置'))
-const mailKeyPlaceholder = computed(() => (mailKeyIsSet.value ? '已保存（留空或保持不变即可）' : '尚未设置'))
+const llmSecret = ref(null)
+const mailSecret = ref(null)
+const secretDirty = reactive({ llm: false, mail: false })
+const baseline = ref('')
+const values = computed(() => Object.fromEntries(Object.entries(form).map(([key, value]) => [key, String(value)])))
+const dirty = computed(() => (baseline.value !== '' && JSON.stringify(values.value) !== baseline.value) || secretDirty.llm || secretDirty.mail)
+const busy = computed(() => saving.value || testing.value || mailTesting.value)
+defineExpose({ dirty, busy })
+
+function applySettings(settings) {
+  for (const key of Object.keys(form)) {
+    if (settings[key] != null) form[key] = settings[key]
+  }
+  keyIsSet.value = settings['llm.api_key'] === MASK
+  mailKeyIsSet.value = settings['mail.smtp_password'] === MASK
+  baseline.value = JSON.stringify(values.value)
+  if (llmSecret.value) llmSecret.value.value = ''
+  if (mailSecret.value) mailSecret.value.value = ''
+  secretDirty.llm = false
+  secretDirty.mail = false
+}
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const { settings } = await api.getSettings()
-    for (const k of Object.keys(form)) {
-      const v = settings[k]
-      if (v === undefined || v === null) continue
-      if (k === 'llm.api_key') {
-        keyIsSet.value = v === MASK
-        form[k] = keyIsSet.value ? MASK : ''
-        continue
-      }
-      if (k === 'mail.smtp_password') {
-        mailKeyIsSet.value = v === MASK
-        form[k] = mailKeyIsSet.value ? MASK : ''
-        continue
-      }
-      form[k] = v
-    }
+    applySettings(settings)
   } catch (e) {
-    toast.err('读取配置失败', { lines: [e.message] })
+    loadError.value = e.message
   } finally {
     loading.value = false
   }
 }
 onMounted(load)
 
-const saveLabels = { llm: 'LLM 配置', mail: '邮件配置', quota: '用户额度', cost: '成本与预算' }
-
-async function save(area) {
+async function save() {
+  if (busy.value || loading.value) return
   saving.value = true
   try {
-    const payload = { ...form }
-    // 密钥仍是掩码时不要发出去，让后端保持原值。
-    if (payload['llm.api_key'] === MASK) delete payload['llm.api_key']
-    if (payload['mail.smtp_password'] === MASK) delete payload['mail.smtp_password']
-    await api.saveSettings(payload)
-    toast.ok(`${saveLabels[area] || '配置'}已保存`)
-    await load()
+    const payload = { ...values.value }
+    const apiKey = llmSecret.value?.value
+    const mailPassword = mailSecret.value?.value
+    if (apiKey && apiKey !== MASK) payload['llm.api_key'] = apiKey
+    if (mailPassword && mailPassword !== MASK) payload['mail.smtp_password'] = mailPassword
+    const { settings } = await api.saveSettings(payload)
+    applySettings(settings)
+    toast.ok('系统配置已保存')
   } catch (e) {
-    toast.err(`${saveLabels[area] || '配置'}保存失败`, { lines: [e.message] })
+    toast.err('配置保存失败', { lines: [e.message] })
   } finally {
     saving.value = false
   }
 }
 
 async function testConn() {
+  if (busy.value || loading.value) return
   testing.value = true
   try {
     const r = await api.testLLM()
@@ -109,7 +113,7 @@ async function testConn() {
 }
 
 async function testMail() {
-  if (!mailTestTo.value) return
+  if (busy.value || loading.value || !mailTestTo.value) return
   mailTesting.value = true
   try {
     await api.testMail(mailTestTo.value)
@@ -125,7 +129,8 @@ async function testMail() {
 // 参考线取视口顶部略下方，「最后一个越过参考线的分区」即当前所在分区。
 let spyLock = 0
 function jump(id) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
+  document.getElementById(id)?.scrollIntoView({ behavior, block: 'start' })
   active.value = id
   // 平滑滚动期间暂停 scroll-spy，避免中途经过的分区把高亮抢走。
   spyLock = Date.now() + 800
@@ -143,7 +148,8 @@ function spy() {
       active.value = sections.at(-1).id
       return
     }
-    const line = 96
+    const compact = window.matchMedia('(max-width: 960px)').matches
+    const line = compact ? 140 : 96
     let current = sections[0].id
     for (const s of sections) {
       const el = document.getElementById(s.id)
@@ -158,13 +164,18 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
 </script>
 
 <template>
-  <div class="settings-layout">
+  <p v-if="loading" class="card" role="status">正在读取系统配置…</p>
+  <div v-else-if="loadError" class="notice err" role="alert">
+    读取配置失败：{{ loadError }} <button type="button" @click="load">重试</button>
+  </div>
+  <div v-else class="settings-layout">
     <nav class="settings-nav" aria-label="系统配置分区">
       <a
         v-for="s in sections"
         :key="s.id"
         :href="`#${s.id}`"
         :class="{ active: active === s.id }"
+        :aria-current="active === s.id ? 'location' : undefined"
         @click.prevent="jump(s.id)"
       >{{ s.label }}</a>
     </nav>
@@ -173,42 +184,55 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
       <section id="settings-llm" class="settings-section">
         <header class="settings-head">
           <h2>LLM 接口</h2>
-          <p class="muted small">模型接口参数保存在服务器，密钥读取时只返回掩码。</p>
+          <p class="muted small">配置 OpenAI 兼容的模型服务。测试连接使用服务器上已保存的配置。</p>
         </header>
-        <div class="settings-fields">
+        <fieldset class="settings-group" :disabled="saving">
+          <legend>连接地址</legend>
           <label>
             <span>API 地址（OpenAI 兼容）</span>
-            <input v-model="form['llm.base_url']" class="mono" placeholder="https://example.com/v1" />
-            <small class="field-hint">填到 /v1 为止，客户端会自动拼 /chat/completions</small>
+            <input v-model="form['llm.base_url']" class="mono" placeholder="https://example.com/v1" aria-describedby="settings-url-hint" />
+            <small id="settings-url-hint" class="field-hint">填至 /v1，客户端会自动添加 /chat/completions。</small>
           </label>
+        </fieldset>
+        <fieldset class="settings-group" :disabled="saving">
+          <legend>鉴权</legend>
           <label>
             <span>API Key</span>
-            <input v-model="form['llm.api_key']" type="password" class="mono"
-                   :placeholder="keyPlaceholder" autocomplete="off" />
-            <small class="field-hint">留空表示不修改；填入新值会覆盖</small>
+            <input ref="llmSecret" type="password" class="mono" autocomplete="new-password"
+                   :placeholder="keyIsSet ? '已保存' : '尚未设置'" aria-describedby="settings-api-key-hint"
+                   @input="secretDirty.llm = Boolean($event.target.value)" />
+            <small id="settings-api-key-hint" class="field-hint">留空保留已保存的密钥。填入新密钥后保存可替换。</small>
           </label>
+        </fieldset>
+        <fieldset class="settings-group" :disabled="saving">
+          <legend>模型参数</legend>
           <label>
             <span>模型名</span>
-            <input v-model="form['llm.model']" class="mono" placeholder="deepseek-flash" />
+            <input v-model="form['llm.model']" class="mono" placeholder="填写服务商提供的模型名" />
           </label>
-          <label>
-            <span>并发数</span>
-            <input v-model="form['llm.concurrency']" type="number" min="1" max="32" />
-            <small class="field-hint">2 核 4GB 服务器建议从 1 开始</small>
-          </label>
-          <label>
-            <span>单请求超时（秒）</span>
-            <input v-model="form['llm.timeout_sec']" type="number" min="10" />
-            <small class="field-hint">生成类请求较慢</small>
-          </label>
-        </div>
+        </fieldset>
+        <fieldset class="settings-group" :disabled="saving">
+          <legend>运行限制</legend>
+          <div class="settings-fields">
+            <label>
+              <span>并发数</span>
+              <input v-model="form['llm.concurrency']" type="number" min="1" max="32" />
+              <small class="field-hint">2 核 4 GB 服务器建议从 1 开始。</small>
+            </label>
+            <label>
+              <span>单请求超时（秒）</span>
+              <input v-model="form['llm.timeout_sec']" type="number" min="10" />
+            </label>
+          </div>
+        </fieldset>
         <div class="settings-actions">
-          <button class="primary" :disabled="saving || loading" @click="save('llm')">
-            {{ saving ? '保存中…' : '保存' }}
+          <button type="button" class="primary" :disabled="busy" @click="save">
+            {{ saving ? '保存中…' : '保存配置' }}
           </button>
-          <button class="ghost" :disabled="testing || loading" @click="testConn">
+          <button type="button" :disabled="busy" @click="testConn">
             {{ testing ? '测试中…' : '测试连接' }}
           </button>
+          <span v-if="dirty" class="muted small" role="status">有未保存更改</span>
         </div>
       </section>
 
@@ -217,7 +241,7 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
           <h2>邮件服务（注册验证码）</h2>
           <p class="muted small">配置 SMTP 后可发送真实邮件验证码；未配置时验证码只打印日志（开发降级）。</p>
         </header>
-        <div class="settings-fields">
+        <fieldset class="settings-fields" :disabled="saving">
           <label>
             <span>SMTP 主机</span>
             <input v-model="form['mail.smtp_host']" class="mono" placeholder="smtp.example.com" />
@@ -232,28 +256,30 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
           </label>
           <label>
             <span>SMTP 密码</span>
-            <input v-model="form['mail.smtp_password']" type="password" class="mono"
-                   :placeholder="mailKeyPlaceholder" autocomplete="off" />
+            <input ref="mailSecret" type="password" class="mono" autocomplete="new-password"
+                   :placeholder="mailKeyIsSet ? '已保存' : '尚未设置'"
+                   @input="secretDirty.mail = Boolean($event.target.value)" />
             <small class="field-hint">留空表示不修改；填入新值会覆盖</small>
           </label>
           <label>
             <span>发件人</span>
             <input v-model="form['mail.from']" class="mono" placeholder="noreply@example.com" />
           </label>
-        </div>
+        </fieldset>
         <div class="settings-actions">
-          <button class="primary" :disabled="saving || loading" @click="save('mail')">
-            {{ saving ? '保存中…' : '保存' }}
+          <button type="button" class="primary" :disabled="busy" @click="save">
+            {{ saving ? '保存中…' : '保存配置' }}
           </button>
+          <span v-if="dirty" class="muted small" role="status">有未保存更改</span>
         </div>
         <div class="material settings-sub">
           <h3>发送测试邮件</h3>
-          <div class="settings-inline">
-            <input v-model="mailTestTo" type="email" placeholder="you@example.com" aria-label="收件人邮箱" />
-            <button class="ghost" :disabled="mailTesting || !mailTestTo" @click="testMail">
+          <form class="settings-inline" @submit.prevent="testMail">
+            <input v-model="mailTestTo" type="email" required placeholder="you@example.com" aria-label="收件人邮箱" />
+            <button class="ghost" type="submit" :disabled="busy || !mailTestTo">
               {{ mailTesting ? '发送中…' : '发送测试邮件' }}
             </button>
-          </div>
+          </form>
         </div>
       </section>
 
@@ -262,7 +288,7 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
           <h2>用户额度</h2>
           <p class="muted small">免费用户每日可用额度；会员不受限。留空或非正数会回落默认值。</p>
         </header>
-        <div class="settings-fields">
+        <fieldset class="settings-fields" :disabled="saving">
           <label>
             <span>每日免费题量</span>
             <input v-model="form['user.daily_free_questions']" type="number" min="1" />
@@ -273,11 +299,12 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
             <input v-model="form['user.daily_free_papers']" type="number" min="1" />
             <small class="field-hint">默认 3 卷</small>
           </label>
-        </div>
+        </fieldset>
         <div class="settings-actions">
-          <button class="primary" :disabled="saving || loading" @click="save('quota')">
-            {{ saving ? '保存中…' : '保存' }}
+          <button type="button" class="primary" :disabled="busy" @click="save">
+            {{ saving ? '保存中…' : '保存配置' }}
           </button>
+          <span v-if="dirty" class="muted small" role="status">有未保存更改</span>
         </div>
       </section>
 
@@ -288,7 +315,7 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
             价格用于批次结束后的花费统计；不填则只记 token 数，不谎报为 0 成本。
           </p>
         </header>
-        <div class="settings-fields">
+        <fieldset class="settings-fields" :disabled="saving">
           <label>
             <span>价格（美元 / 千 token，输入,输出）</span>
             <input v-model="form['llm.price_per_1k']" class="mono" placeholder="0.0005,0.0015" />
@@ -298,11 +325,12 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
             <input v-model="form['llm.daily_budget_usd']" type="number" min="0" step="0.01" placeholder="留空不限制" />
             <small class="field-hint">预算配置项；当前网站不开放实时 AI 请求，此值尚未作为运行时预算闸门执行。</small>
           </label>
-        </div>
+        </fieldset>
         <div class="settings-actions">
-          <button class="primary" :disabled="saving || loading" @click="save('cost')">
-            {{ saving ? '保存中…' : '保存' }}
+          <button type="button" class="primary" :disabled="busy" @click="save">
+            {{ saving ? '保存中…' : '保存配置' }}
           </button>
+          <span v-if="dirty" class="muted small" role="status">有未保存更改</span>
         </div>
       </section>
 
@@ -316,7 +344,7 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
           <table class="data-table settings-reference-table">
             <tbody>
               <tr><td>单题标注</td><td class="mono">约 3.3k token（含重试，以批次统计为准）</td></tr>
-              <tr><td>全量 27,449 题</td><td class="mono">约 30 小时有效跑批，限流与低并发会增加耗时</td></tr>
+              <tr><td>全量标注</td><td class="mono">耗时取决于实际题量、并发和服务限流</td></tr>
               <tr><td>MVP 50 题</td><td class="mono">按实际端点价格与 token 用量计算</td></tr>
             </tbody>
           </table>
@@ -350,105 +378,132 @@ onBeforeUnmount(() => window.removeEventListener('scroll', spy))
 <style scoped>
 .settings-layout {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: var(--space-8);
-  max-width: 1180px;
-  margin: 0 auto;
+  grid-template-columns: 180px minmax(0, 920px);
+  gap: var(--space-6);
   align-items: start;
+  min-width: 0;
 }
 
 .settings-nav {
   position: sticky;
-  top: var(--space-6);
+  top: calc(var(--topbar-height) + var(--space-4));
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-}
-.settings-nav a {
-  text-decoration: none;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-label);
-  padding: var(--space-2) var(--space-3);
-  border-left: 3px solid transparent;
-  border-radius: 0 var(--radius-small) var(--radius-small) 0;
-  white-space: nowrap;
-}
-.settings-nav a:hover {
-  color: var(--color-text);
-  background: var(--color-nav-hover);
-}
-.settings-nav a.active {
-  color: var(--color-nav-active-text);
-  background: var(--color-nav-active);
-  border-left-color: var(--color-primary);
-  font-weight: 600;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
 }
 
+.settings-nav a {
+  display: flex;
+  align-items: center;
+  flex: none;
+  min-height: 44px;
+  text-decoration: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-control);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  white-space: nowrap;
+}
+
+.settings-nav a:hover { background: var(--color-nav-hover); }
+
+.settings-nav a.active {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  font-weight: 650;
+}
+
+.settings-body { min-width: 0; }
+
 .settings-section {
-  scroll-margin-top: var(--space-6);
+  scroll-margin-top: calc(var(--topbar-height) + var(--space-4));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+  padding: var(--space-6);
 }
-.settings-section + .settings-section {
-  margin-top: var(--space-6);
-  padding-top: var(--space-8);
-  border-top: var(--border-width) solid var(--color-border);
-}
-.settings-head { margin-bottom: var(--space-5); }
+
+.settings-section + .settings-section { margin-top: var(--space-4); }
+.settings-head { margin-bottom: var(--space-4); }
 .settings-head p { margin-bottom: 0; }
+
+.settings-section fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-group legend {
+  width: 100%;
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-3) 0 var(--space-2);
+  font-size: var(--font-size-control);
+  font-weight: 650;
+}
+
+.settings-section .settings-group + .settings-group { margin-top: var(--space-4); }
 
 .settings-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4) var(--space-6);
+  gap: var(--space-4);
 }
+
+.settings-group > label { max-width: 600px; }
+.settings-section label { min-width: 0; }
+.settings-section input { min-width: 0; max-width: 100%; }
+
 .settings-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-6);
 }
 
-.settings-sub { margin-top: var(--space-6); padding: var(--space-4) var(--space-5); }
+.settings-sub { margin-top: var(--space-6); padding: var(--space-4); }
 .settings-sub h3 { margin-bottom: var(--space-3); }
+
 .settings-inline {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
-.settings-inline input { flex: 1; min-width: 200px; }
+
+.settings-inline input { flex: 1 1 220px; margin: 0; }
 
 .settings-fold {
-  border: var(--border-width) solid var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
   padding: var(--space-3) var(--space-4);
 }
+
 .settings-fold + .settings-fold { margin-top: var(--space-4); }
-.settings-fold summary {
-  margin-bottom: 0;
-  font-weight: 600;
-  font-size: var(--font-size-label);
-  color: var(--color-text-muted);
-}
-.settings-fold[open] summary { margin-bottom: var(--space-3); color: var(--color-text); }
-.settings-fold .data-table { background: var(--color-surface); }
+.settings-fold summary { font-size: var(--font-size-label); font-weight: 600; }
+.settings-fold[open] summary { margin-bottom: var(--space-3); }
+.settings-reference-table { background: var(--color-surface); table-layout: fixed; overflow-wrap: anywhere; }
 .settings-reference-table td:first-child { color: var(--color-text-muted); width: 42%; }
 
 @media (max-width: 960px) {
-  .settings-layout { grid-template-columns: 1fr; gap: var(--space-5); }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
   .settings-nav {
-    position: static;
+    top: var(--topbar-height);
     flex-direction: row;
     overflow-x: auto;
-    border-bottom: var(--border-width) solid var(--color-border);
-    padding-bottom: var(--space-2);
+    z-index: 1;
   }
-  .settings-nav a {
-    border-left: none;
-    border-bottom: 3px solid transparent;
-    border-radius: var(--radius-small) var(--radius-small) 0 0;
-  }
-  .settings-nav a.active { border-bottom-color: var(--color-primary); }
+  .settings-section { scroll-margin-top: calc(var(--topbar-height) + 76px); }
 }
+
 @media (max-width: 640px) {
-  .settings-fields { grid-template-columns: 1fr; }
+  .settings-section { padding: var(--space-4); }
+  .settings-fields { grid-template-columns: minmax(0, 1fr); }
+  .settings-inline button { width: 100%; }
 }
 </style>

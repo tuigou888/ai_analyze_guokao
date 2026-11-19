@@ -48,6 +48,7 @@ CSV 每行：提交时间、练习类型、练习 ID、题号、模块、本人�
 |---|---|---|
 | GET | `/filters` | `modules,years,regions,exam_types,variants` 实际筛选值 |
 | GET | `/papers` | 按模块、年份、地区、考试类型、卷别筛选；返回原卷模块，不合并不同模块为一套完整行测卷 |
+| GET | `/papers/progress` | `paper_ids=1,2`，最多 100 个正整数；返回当前用户每份试卷的可继续或复盘记录 `{items: [...]}` |
 | GET | `/questions` | 分页题库；返回 `{total,items,page,size}` |
 | GET | `/questions/:id` | 题干、原始材料、OCR 文本、选项、题型、来源与分类摘要 |
 | GET | `/questions/:id/reveal` | 用户有该题非空提交记录后返回答案、公式解析、完整标注；否则 403 |
@@ -136,3 +137,11 @@ v12 追加 user_profile（默认值回填、revision）、app_session 独立 pub
 保存使用原子版本比较并递增，成功返回 `{ "ok": true, "draft_revision": 新版本 }`。陈旧草稿和陈旧交卷返回 409，不改变服务器答案。前端串行执行保存并采用上次成功响应的版本；冲突时保留当前选择、暂停自动保存和交卷，提示先记录本页作答，再经确认加载服务器草稿。不可对冲突无条件更新版本并重发旧快照。
 
 已经提交的同一练习重复交卷返回原判分，不再次写答案、错题或统计。独立 reveal 与练习复盘统一为：本人非空且已提交的答案允许查看解析，答错同样允许；草稿、漏答和他人答案不能解锁。普通用户错误原密码是 400 业务校验错误，401 继续仅表示身份验证失败。
+
+## 试卷卡片会话关联（2026-11-19）
+
+`GET /api/papers/progress?paper_ids=1,2` 沿用学习用户认证及身份前提，只取当前用户，不接受 query 中的 user_id 作为授权。空列表、非正整数或超过 100 个 ID 返回 400；无记录返回 `items: []`。
+
+每个 item 包含 `paper_id,session_id,status,answered,total,started_at`，完成后另含 `submitted_at,correct`。`status` 为 `in_progress` 或 `completed`。同一试卷优先选最新创建的未交卷练习，没有未交卷练习时按实际提交时间取最近一次，兼容不同 UTC 偏移，时间相同以 ID 排序。草稿作答数按本次题号去重计数，已提交作答数只计非空作答。不会返回标准答案、作答内容、题目、解析、spec 或 draft。
+
+接口只读，不创建会话或扣除额度，不修改原 `/papers` 和练习记录响应。客户端继续/复盘直接进入已有 `/practice?session=...`；“重新组卷”仍使用原创建接口和额度规则。

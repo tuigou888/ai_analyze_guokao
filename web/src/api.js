@@ -70,6 +70,7 @@ return {
   filters: () => request('/api/filters'),
   questions: f => request(`/api/questions?${query(f)}`),
   papers: f => request(`/api/papers?${query(f)}`),
+  paperProgress: ids => request(`/api/papers/progress?${query({paper_ids: ids.join(',')})}`),
   concepts: f => request(`/api/concepts?${query(f)}`),
   concept: id => request(`/api/concepts/${id}`),
   createSession: (kind, spec) => {
