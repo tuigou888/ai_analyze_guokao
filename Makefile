@@ -1,7 +1,7 @@
 DB   ?= var/db/gk.sqlite
 DATA ?= data
 
-.PHONY: help build test test-short vuln ingest reingest stats fmt vet clean \
+.PHONY: help build test test-short test-deploy vuln ingest reingest stats fmt vet clean \
         media-index media-ocr media-ocr-text media-backfill media-report media-sample media \
         web web-install serve admin-init config release backup distill-smoke distill-mvp distill-report
 
@@ -13,6 +13,10 @@ build:
 
 test:
 	go test ./...
+
+# 部署脚本回归：隔离临时文件，不启动 Docker 或浏览器。
+test-deploy:
+	python3 test-artifacts/docker_run_regression.py
 
 # 依赖漏洞扫描（安全审计 M-4）。需先安装：
 #   go install golang.org/x/vuln/cmd/govulncheck@latest
