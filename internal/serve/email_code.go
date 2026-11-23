@@ -55,7 +55,9 @@ func (s *Server) emailCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !cfg.Configured() {
-		s.Log.Warn("开发降级：邮件验证码仅打印日志", "email", in.Email, "code", code)
+		// 保留「开发降级」开头：部署文档用这个关键词检索日志（deployment-2c4g.md §11.1）。
+		// 同时点名风险，避免线上漏配 SMTP 时静默降级无人察觉（测试报告 W4）。
+		s.Log.Warn("开发降级：SMTP 未配置，验证码未发送邮件、仅打印本日志；线上开放注册前必须在管理端「设置 → 邮件服务」完成配置", "email", in.Email, "code", code)
 		writeJSON(w, 200, map[string]any{"ok": true})
 		return
 	}

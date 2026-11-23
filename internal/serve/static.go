@@ -2,6 +2,7 @@ package serve
 
 import (
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -24,6 +25,13 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := s.Assets.Open(p)
 	if err != nil {
+		// 静态资源路径缺失时直接 404：回退 index.html 会让 CDN/浏览器把 HTML
+		// 缓存到 .js/.png 路径（测试报告 W1），错误也被掩盖成 MIME 解析问题。
+		// 只有页面路由（无扩展名）才回退，由前端路由接管。
+		if strings.HasPrefix(p, "assets/") || strings.Contains(path.Base(p), ".") {
+			http.NotFound(w, r)
+			return
+		}
 		// SPA 回退
 		s.serveIndex(w, r)
 		return

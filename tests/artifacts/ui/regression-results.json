@@ -1,0 +1,621 @@
+{
+  "checks": [
+    "题库查询区分草稿与已应用范围",
+    "无匹配结果与失败重试使用真实接口",
+    "短题干和题图始终可以读完整",
+    "移动导航与筛选抽屉、地区键盘和双层Escape",
+    "真题地区查询、紧凑卡片及单页分页",
+    "真题原卷组题、草稿保存和记录继续",
+    "考点目录、详情与关联真题入口",
+    "真实专项组题、保存、提交前答案锁定和记录恢复",
+    "未完成交卷确认与未答题解析保持锁定",
+    "错题订正、恢复、收藏、移除确认与焦点",
+    "收藏取消需确认并保留原作答记录",
+    "个人资料真实保存、统计范围与安全错误反馈",
+    "系统配置真实保存、留空密钥、连接失败提示",
+    "用户查询、会员调整、封禁解封与重置密码",
+    "管理员账号创建、重置口令与删除",
+    "管理导航、数据维护和运营管理员权限",
+    "登录会话管理与本人密码修改后重新登录",
+    "七个断点、全部学习页面无整页横向溢出",
+    "全部后台页面断点与表格局部滚动"
+  ],
+  "viewports": [
+    {
+      "name": "questions",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "questions",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "questions",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "questions",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "questions",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "questions",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "questions",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "papers",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "papers",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "papers",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "papers",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "papers",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "papers",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "papers",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "concepts",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "concepts",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "concepts",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "concepts",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "concepts",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "concepts",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "concepts",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "concept-detail",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "concept-detail",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "concept-detail",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "concept-detail",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "concept-detail",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "concept-detail",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "concept-detail",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "wrongbook",
+      "width": 1920,
+      "scroll": 1920
+    },
+    {
+      "name": "wrongbook",
+      "width": 1440,
+      "scroll": 1440
+    },
+    {
+      "name": "wrongbook",
+      "width": 1024,
+      "scroll": 1024
+    },
+    {
+      "name": "wrongbook",
+      "width": 768,
+      "scroll": 768
+    },
+    {
+      "name": "wrongbook",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "wrongbook",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "wrongbook",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "favorites",
+      "width": 1920,
+      "scroll": 1920
+    },
+    {
+      "name": "favorites",
+      "width": 1440,
+      "scroll": 1440
+    },
+    {
+      "name": "favorites",
+      "width": 1024,
+      "scroll": 1024
+    },
+    {
+      "name": "favorites",
+      "width": 768,
+      "scroll": 768
+    },
+    {
+      "name": "favorites",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "favorites",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "favorites",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "records",
+      "width": 1920,
+      "scroll": 1920
+    },
+    {
+      "name": "records",
+      "width": 1440,
+      "scroll": 1440
+    },
+    {
+      "name": "records",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "records",
+      "width": 768,
+      "scroll": 768
+    },
+    {
+      "name": "records",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "records",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "records",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "account",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "account",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "account",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "account",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "account",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "account",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "account",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "profile",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "profile",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "profile",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "profile",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "profile",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "profile",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "profile",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "security",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "security",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "security",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "security",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "security",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "security",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "security",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "review",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "review",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "review",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "review",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "review",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "review",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "review",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "practice",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "practice",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "practice",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "practice",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "practice",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "practice",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "practice",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "admin-settings",
+      "width": 1920,
+      "scroll": 1905
+    },
+    {
+      "name": "admin-settings",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "admin-settings",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "admin-settings",
+      "width": 768,
+      "scroll": 753
+    },
+    {
+      "name": "admin-settings",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "admin-settings",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "admin-settings",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "admin-users",
+      "width": 1920,
+      "scroll": 1920
+    },
+    {
+      "name": "admin-users",
+      "width": 1440,
+      "scroll": 1440
+    },
+    {
+      "name": "admin-users",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "admin-users",
+      "width": 768,
+      "scroll": 768
+    },
+    {
+      "name": "admin-users",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "admin-users",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "admin-users",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "admin-admins",
+      "width": 1920,
+      "scroll": 1920
+    },
+    {
+      "name": "admin-admins",
+      "width": 1440,
+      "scroll": 1425
+    },
+    {
+      "name": "admin-admins",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "admin-admins",
+      "width": 768,
+      "scroll": 768
+    },
+    {
+      "name": "admin-admins",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "admin-admins",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "admin-admins",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "admin-maintenance",
+      "width": 1920,
+      "scroll": 1920
+    },
+    {
+      "name": "admin-maintenance",
+      "width": 1440,
+      "scroll": 1440
+    },
+    {
+      "name": "admin-maintenance",
+      "width": 1024,
+      "scroll": 1024
+    },
+    {
+      "name": "admin-maintenance",
+      "width": 768,
+      "scroll": 768
+    },
+    {
+      "name": "admin-maintenance",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "admin-maintenance",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "admin-maintenance",
+      "width": 320,
+      "scroll": 320
+    },
+    {
+      "name": "admin-account",
+      "width": 1920,
+      "scroll": 1920
+    },
+    {
+      "name": "admin-account",
+      "width": 1440,
+      "scroll": 1440
+    },
+    {
+      "name": "admin-account",
+      "width": 1024,
+      "scroll": 1009
+    },
+    {
+      "name": "admin-account",
+      "width": 768,
+      "scroll": 768
+    },
+    {
+      "name": "admin-account",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "name": "admin-account",
+      "width": 360,
+      "scroll": 360
+    },
+    {
+      "name": "admin-account",
+      "width": 320,
+      "scroll": 320
+    }
+  ],
+  "consoleErrors": []
+}

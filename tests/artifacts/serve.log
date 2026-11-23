@@ -1,0 +1,7 @@
+gk 服务已启动: http://127.0.0.1:8091
+管理入口: /admin（接口 /api/admin/*）
+2026/11/21 17:03:08 WARN 开发降级：邮件验证码仅打印日志 email=qa-user-tx9@test.local code=577411
+2026/11/21 17:04:29 WARN 开发降级：邮件验证码仅打印日志 email=qa-u1-tx9@test.local code=372540
+2026/11/21 17:07:30 WARN 开发降级：邮件验证码仅打印日志 email=qa-u2-tx9@test.local code=036324
+
+正在关闭…

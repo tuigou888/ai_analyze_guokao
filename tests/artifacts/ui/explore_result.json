@@ -1,0 +1,131 @@
+{
+ "results": [
+  {
+   "case": "未登录访问 /practice",
+   "url": "/login?redirect=/practice",
+   "hasH1": true,
+   "text": "跳到正文\n行\n行测研习\n\n从真题开始，把知识读懂\n\n每一次练习，\n都有迹可循。\n\n按模块研习真题，记录作答与错题，\n把零散的知识，慢慢连成地图。\n\n研习方法\n独",
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "未登录访问 /account",
+   "url": "/login?redirect=/account",
+   "hasH1": true,
+   "text": "跳到正文\n行\n行测研习\n\n从真题开始，把知识读懂\n\n每一次练习，\n都有迹可循。\n\n按模块研习真题，记录作答与错题，\n把零散的知识，慢慢连成地图。\n\n研习方法\n独",
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "未登录访问 /wrongbook",
+   "url": "/login?redirect=/wrongbook",
+   "hasH1": true,
+   "text": "跳到正文\n行\n行测研习\n\n从真题开始，把知识读懂\n\n每一次练习，\n都有迹可循。\n\n按模块研习真题，记录作答与错题，\n把零散的知识，慢慢连成地图。\n\n研习方法\n独",
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "未登录访问 /admin",
+   "url": "/admin/login?redirect=/admin",
+   "hasH1": true,
+   "text": "跳到正文\n行\n行测研习\n\n从真题开始，把知识读懂\n\n每一次练习，\n都有迹可循。\n\n按模块研习真题，记录作答与错题，\n把零散的知识，慢慢连成地图。\n\n研习方法\n独",
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /questions",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /papers",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /concepts",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /practice",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /wrongbook",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /favorites",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "页面健康检查 /account",
+   "exceptions": 0,
+   "badResources": [],
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "登录页键盘 Tab 焦点",
+   "focus1": {
+    "tag": "A",
+    "type": "",
+    "label": ""
+   },
+   "focus2": {
+    "tag": "A",
+    "type": "",
+    "label": ""
+   },
+   "pass": false
+  },
+  {
+   "case": "未知路由处理",
+   "text": "跳到正文\n\n404\n\n这一页还没有笔记\n\n页面地址不存在。\n\n返回题库",
+   "blank": false,
+   "pass": true
+  },
+  {
+   "case": "200% 缩放溢出 /",
+   "scroll": 765,
+   "width": 780,
+   "pass": true
+  },
+  {
+   "case": "200% 缩放溢出 /questions",
+   "scroll": 765,
+   "width": 780,
+   "pass": true
+  },
+  {
+   "case": "搜索按钮快速连点",
+   "rows": 20,
+   "err": false,
+   "pass": true
+  }
+ ],
+ "browserExceptions": []
+}

@@ -1,0 +1,14 @@
+ok  	ai_analyze_guokao/cmd/gk	1.207s
+ok  	ai_analyze_guokao/internal/admin	(cached)
+ok  	ai_analyze_guokao/internal/distill	(cached)
+ok  	ai_analyze_guokao/internal/ingest	(cached)
+ok  	ai_analyze_guokao/internal/llm	(cached)
+ok  	ai_analyze_guokao/internal/mail	(cached)
+ok  	ai_analyze_guokao/internal/media	(cached)
+?   	ai_analyze_guokao/internal/model	[no test files]
+ok  	ai_analyze_guokao/internal/netguard	(cached)
+ok  	ai_analyze_guokao/internal/serve	18.615s
+ok  	ai_analyze_guokao/internal/setting	(cached)
+ok  	ai_analyze_guokao/internal/store	(cached)
+ok  	ai_analyze_guokao/internal/study	2.070s
+EXIT=0

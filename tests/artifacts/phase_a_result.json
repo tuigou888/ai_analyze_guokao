@@ -1,0 +1,151 @@
+{
+ "results": [
+  {
+   "id": "A1.1",
+   "name": "email-code 正常请求",
+   "pass": false,
+   "detail": "429 {'error': '发送过于频繁，请稍后再试'}",
+   "sev": ""
+  },
+  {
+   "id": "A1.2",
+   "name": "email-code 缺 email 应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n邮箱格式不正确'}",
+   "sev": ""
+  },
+  {
+   "id": "A1.3",
+   "name": "email-code 非法 email 应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n邮箱格式不正确'}",
+   "sev": ""
+  },
+  {
+   "id": "A1.4",
+   "name": "email-code 伪造 Origin 应 403",
+   "pass": true,
+   "detail": "403 {'error': '不允许跨站提交或缺少有效 Origin'}",
+   "sev": ""
+  },
+  {
+   "id": "A2.1",
+   "name": "register 正常注册",
+   "pass": false,
+   "detail": "400 {'error': '请求参数不合法\\n验证码错误或已过期'}",
+   "sev": ""
+  },
+  {
+   "id": "A2.2",
+   "name": "register 错误验证码应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n验证码错误或已过期'}",
+   "sev": ""
+  },
+  {
+   "id": "A2.3",
+   "name": "register 重复用户名应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n验证码错误或已过期'}",
+   "sev": ""
+  },
+  {
+   "id": "A2.4",
+   "name": "register 重复 email 应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n验证码错误或已过期'}",
+   "sev": ""
+  },
+  {
+   "id": "A2.5",
+   "name": "register 弱密码/超短用户名应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n用户名需 3–32 个字符，密码需 8–72 字节，昵称最多 40 字'}",
+   "sev": ""
+  },
+  {
+   "id": "A3.1",
+   "name": "login 正常登录返回 cookie",
+   "pass": true,
+   "detail": "200 ['gk_user=cc157b1725720c85e0d89060008631ca4eec93b77efb969b4216d05232344051; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Strict']",
+   "sev": ""
+  },
+  {
+   "id": "A3.2",
+   "name": "login 错误密码应 4xx",
+   "pass": true,
+   "detail": "401 {'error': '账号或密码错误'}",
+   "sev": ""
+  },
+  {
+   "id": "A3.3",
+   "name": "login 不存在用户应 4xx 且提示一致",
+   "pass": true,
+   "detail": "401 {'error': '账号或密码错误'}",
+   "sev": ""
+  },
+  {
+   "id": "A4.1",
+   "name": "auth/me 登录后返回身份",
+   "pass": true,
+   "detail": "200 {'id': 2, 'username': 'qa-u1', 'nickname': '测试用户一', 'role': 'free'}",
+   "sev": ""
+  },
+  {
+   "id": "A4.2",
+   "name": "auth/me 未登录应 401",
+   "pass": true,
+   "detail": "401 {'error': '请先登录'}",
+   "sev": ""
+  },
+  {
+   "id": "A4.3",
+   "name": "auth/me 伪造 token 应 401",
+   "pass": true,
+   "detail": "401 {'error': '请先登录'}",
+   "sev": ""
+  },
+  {
+   "id": "A4.4",
+   "name": "改密码成功",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "A4.5",
+   "name": "改密码后旧会话状态",
+   "pass": true,
+   "detail": "status=401(观察点: 旧会话是否保留) {'error': '请先登录'}",
+   "sev": ""
+  },
+  {
+   "id": "A4.6",
+   "name": "新密码可登录",
+   "pass": true,
+   "detail": "200 {'id': 2, 'username': 'qa-u1', 'nickname': '测试用户一', 'role': 'free'}",
+   "sev": ""
+  },
+  {
+   "id": "A4.7",
+   "name": "旧密码错误改密码应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n原密码错误'}",
+   "sev": ""
+  },
+  {
+   "id": "A4.8",
+   "name": "logout 正常",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "A4.9",
+   "name": "logout 后会话失效",
+   "pass": true,
+   "detail": "401 {'error': '请先登录'}",
+   "sev": ""
+  }
+ ]
+}

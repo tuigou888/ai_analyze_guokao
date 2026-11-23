@@ -77,6 +77,9 @@ func New(settings *setting.Store, db *sql.DB, assets fs.FS) *Server {
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	// HEAD 走 GET 处理器并丢弃响应体：chi 的 r.Get 不会注册 HEAD，缺了这条
+	// 所有 HEAD 请求都是 405，用 HEAD 探活的监控会误判服务不可用（测试报告 W3）。
+	r.Use(middleware.GetHead)
 	r.Use(s.sameOrigin)
 	r.Use(newAuthLimiter(s.TrustedProxies...).middleware)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,24 @@
+
+> gk-web@0.1.0 test:ui
+> node scripts/ui-regression.mjs
+
+PASS 题库查询区分草稿与已应用范围
+PASS 无匹配结果与失败重试使用真实接口
+PASS 短题干和题图始终可以读完整
+PASS 移动导航与筛选抽屉、地区键盘和双层Escape
+PASS 真题地区查询、紧凑卡片及单页分页
+PASS 真题原卷组题、草稿保存和记录继续
+PASS 考点目录、详情与关联真题入口
+PASS 真实专项组题、保存、提交前答案锁定和记录恢复
+PASS 未完成交卷确认与未答题解析保持锁定
+PASS 错题订正、恢复、收藏、移除确认与焦点
+PASS 收藏取消需确认并保留原作答记录
+PASS 个人资料真实保存、统计范围与安全错误反馈
+PASS 系统配置真实保存、留空密钥、连接失败提示
+PASS 用户查询、会员调整、封禁解封与重置密码
+PASS 管理员账号创建、重置口令与删除
+PASS 管理导航、数据维护和运营管理员权限
+PASS 登录会话管理与本人密码修改后重新登录
+PASS 七个断点、全部学习页面无整页横向溢出
+PASS 全部后台页面断点与表格局部滚动
+PASS 19 workflows; 119 viewport checks; 0 browser exceptions

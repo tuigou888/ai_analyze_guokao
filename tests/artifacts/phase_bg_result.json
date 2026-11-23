@@ -1,0 +1,578 @@
+{
+ "results": [
+  {
+   "id": "F0",
+   "name": "qa-u2 可登录(IDOR 对照)",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "B1.1",
+   "name": "题目列表不泄露答案/解析",
+   "pass": true,
+   "detail": "200 keys=['id', 'module', 'stem', 'answer_type', 'option_count', 'has_figure', 'has_label']",
+   "sev": ""
+  },
+  {
+   "id": "B1.2",
+   "name": "按 module 筛选结果正确",
+   "pass": true,
+   "detail": "200 modules={'判断推理'}",
+   "sev": ""
+  },
+  {
+   "id": "B1.3",
+   "name": "按 year+exam_type 筛选",
+   "pass": true,
+   "detail": "200 n=5",
+   "sev": ""
+  },
+  {
+   "id": "B1.4",
+   "name": "page 超尾页应空列表不 500",
+   "pass": true,
+   "detail": "200 n=0",
+   "sev": ""
+  },
+  {
+   "id": "B1.5",
+   "name": "中文关键词搜索命中",
+   "pass": true,
+   "detail": "200 n=9",
+   "sev": ""
+  },
+  {
+   "id": "B1.6",
+   "name": "SQL注入样例搜索不 500",
+   "pass": true,
+   "detail": "200 {'total': 0, 'items': [], 'page': 1, 'size': 5}",
+   "sev": ""
+  },
+  {
+   "id": "B1.7",
+   "name": "XSS 样例搜索不 500",
+   "pass": true,
+   "detail": "200 {'total': 0, 'items': [], 'page': 1, 'size': 5}",
+   "sev": ""
+  },
+  {
+   "id": "B1.8",
+   "name": "emoji 搜索不 500",
+   "pass": true,
+   "detail": "200 {'total': 0, 'items': [], 'page': 1, 'size': 5}",
+   "sev": ""
+  },
+  {
+   "id": "B2.1",
+   "name": "题目详情不含答案",
+   "pass": true,
+   "detail": "200 leak=False",
+   "sev": ""
+  },
+  {
+   "id": "B2.2",
+   "name": "不存在题目 404",
+   "pass": true,
+   "detail": "404 {'error': '记录不存在'}",
+   "sev": ""
+  },
+  {
+   "id": "B2.3",
+   "name": "负数 id 404/400",
+   "pass": true,
+   "detail": "404 {'error': '记录不存在'}",
+   "sev": ""
+  },
+  {
+   "id": "B2.4",
+   "name": "非数字 id 400",
+   "pass": true,
+   "detail": "404 {'error': '记录不存在'}",
+   "sev": ""
+  },
+  {
+   "id": "B3.1",
+   "name": "reveal 未作答应拒绝(4xx)",
+   "pass": true,
+   "detail": "403 {'error': '请先作答后查看解析'}",
+   "sev": ""
+  },
+  {
+   "id": "C1.1",
+   "name": "创建指定题目会话",
+   "pass": true,
+   "detail": "200 {'draft_revision': 0, 'session_id': 4, 'kind': 'single', 'spec': {'question_ids': [27449, 21, 10], 'limit': 3}, 'question_ids': [27449, 21, 10], 'started_at': '2026-11-21T09:11:05Z', 'submitted_at': '",
+   "sev": ""
+  },
+  {
+   "id": "C1.2",
+   "name": "会话题目不含答案",
+   "pass": true,
+   "detail": "leak=False",
+   "sev": ""
+  },
+  {
+   "id": "C1.3",
+   "name": "非法 kind 应 400",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法'}",
+   "sev": ""
+  },
+  {
+   "id": "C1.4",
+   "name": "answer_type=other 拒绝练习",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n该题暂无标准答案，暂不支持练习'}",
+   "sev": ""
+  },
+  {
+   "id": "C1.5",
+   "name": "question_ids 超上限(200) 应 400",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法'}",
+   "sev": ""
+  },
+  {
+   "id": "C1.6",
+   "name": "不存在题目 id 404",
+   "pass": true,
+   "detail": "404 {'error': '记录不存在'}",
+   "sev": ""
+  },
+  {
+   "id": "C2.1",
+   "name": "答题缺 draft_revision 应 400",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法'}",
+   "sev": ""
+  },
+  {
+   "id": "C2.2",
+   "name": "答题 revision=0 保存草稿",
+   "pass": true,
+   "detail": "200 {'draft_revision': 1, 'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "C2.3",
+   "name": "旧 revision 重放应冲突 409",
+   "pass": true,
+   "detail": "409 {'error': '练习已在其他窗口更新，请加载最新草稿后再保存或提交'}",
+   "sev": ""
+  },
+  {
+   "id": "C2.4",
+   "name": "正确 revision 再次保存",
+   "pass": true,
+   "detail": "200 {'draft_revision': 2, 'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "C2.5",
+   "name": "非法答案选项值应 4xx",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法'}",
+   "sev": ""
+  },
+  {
+   "id": "C3.1",
+   "name": "提交判分返回结果",
+   "pass": true,
+   "detail": "200 {'draft_revision': 3, 'session_id': 4, 'kind': 'single', 'spec': {'question_ids': [27449, 21, 10], 'limit': 3}, 'question_ids': [27449, 21, 10], 'started_at': '2026-11-21T09:11:05Z', 'submitted_at': '2026-11-21T09:11:05Z', 'total': 3, 'correct': 0, 'duration_ms': 1500, 'questions': [{'id': 27449, 'm",
+   "sev": ""
+  },
+  {
+   "id": "C3.2",
+   "name": "故意答错 → 正确数=0",
+   "pass": true,
+   "detail": "correct=0 resp_keys=['draft_revision', 'session_id', 'kind', 'spec', 'question_ids', 'started_at', 'submitted_at', 'total', 'correct', 'duration_ms']",
+   "sev": ""
+  },
+  {
+   "id": "C3.3",
+   "name": "重复提交应 4xx 不重复判分",
+   "pass": false,
+   "detail": "200 {'draft_revision': 3, 'session_id': 4, 'kind': 'single', 'spec': {'question_ids': [27449, 21, 10], 'limit': 3}, 'question_ids': [27449, 21, 10], 'star",
+   "sev": ""
+  },
+  {
+   "id": "B3.2",
+   "name": "reveal 已作答应放行",
+   "pass": true,
+   "detail": "200 {'id': 27449, 'module': '资料分析', 'stem': '2017年中国内地出口额占全部比重大于进口额占全部比重的国家和地区有：', 'stem_with_text': '2017年中国内地出口额占全部比重大于进口额占全部比重的国家和地区有：', 'material_body",
+   "sev": ""
+  },
+  {
+   "id": "C3.4",
+   "name": "按真实答案提交 → 正确数=2",
+   "pass": true,
+   "detail": "200 correct=2 resp={'draft_revision': 1, 'session_id': 5, 'kind': 'single', 'spec': {'question_ids': [27449, 21], 'limit': 2}, 'question_ids': [27449, 21], 'started_at': '2026-11-21T09:11:05Z', 'submitted_at': '2026-11-21T09:11:05Z', 'total': 2, 'correct': 2, 'duration",
+   "sev": ""
+  },
+  {
+   "id": "C4.1",
+   "name": "答错题自动进错题本",
+   "pass": false,
+   "detail": "200 ids=[10]",
+   "sev": ""
+  },
+  {
+   "id": "C4.2",
+   "name": "错题订正标记",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "C5.1",
+   "name": "收藏题目",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "C5.2",
+   "name": "收藏列表包含刚收藏题",
+   "pass": true,
+   "detail": "200 ids=[21]",
+   "sev": ""
+  },
+  {
+   "id": "C5.3",
+   "name": "重复收藏幂等/4xx",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "C6.1",
+   "name": "练习记录列表",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "C6.2",
+   "name": "练习统计",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "F1.1",
+   "name": "跨用户读他人会话应 404/403",
+   "pass": true,
+   "detail": "404 {'error': '记录不存在'}",
+   "sev": ""
+  },
+  {
+   "id": "F1.2",
+   "name": "跨用户写他人会话应 404/403",
+   "pass": true,
+   "detail": "404",
+   "sev": ""
+  },
+  {
+   "id": "F1.3",
+   "name": "跨用户提交他人会话应 404/403",
+   "pass": true,
+   "detail": "404",
+   "sev": ""
+  },
+  {
+   "id": "D1.1",
+   "name": "读 profile",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "D1.2",
+   "name": "超长 nickname 应 4xx 或被截断",
+   "pass": true,
+   "detail": "400 {'error': '请仅提交完整的可编辑资料字段'}",
+   "sev": ""
+  },
+  {
+   "id": "D1.3",
+   "name": "XSS nickname 接受但存储原文/拒绝",
+   "pass": true,
+   "detail": "400 {'error': '请仅提交完整的可编辑资料字段'}",
+   "sev": ""
+  },
+  {
+   "id": "D2.1",
+   "name": "dashboard 返回",
+   "pass": true,
+   "detail": "200 {'timezone': 'Asia/Shanghai', 'start_date': '2026-10-23', 'end_date': '2026-11-21', 'days': 30, 'profile': {'username': ",
+   "sev": ""
+  },
+  {
+   "id": "D2.2",
+   "name": "导出本人记录",
+   "pass": true,
+   "detail": "200 len=885",
+   "sev": ""
+  },
+  {
+   "id": "D3.1",
+   "name": "会话列表",
+   "pass": true,
+   "detail": "200 {'items': [{'public_id': '7ea2f86a62ea0ab603ebcbe1331757a9', 'current': True, 'device_label': '其他浏览器 / 未知系统', 'ip_hint': '127.0.0.*', 'created_at': '2",
+   "sev": ""
+  },
+  {
+   "id": "D3.2",
+   "name": "吊销其他会话",
+   "pass": true,
+   "detail": "200 {'revoked': 1}",
+   "sev": ""
+  },
+  {
+   "id": "D3.3",
+   "name": "吊销后当前会话仍有效",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "F2.1",
+   "name": "学习用户访问 admin API 应 401/403",
+   "pass": true,
+   "detail": "401",
+   "sev": ""
+  },
+  {
+   "id": "F2.2",
+   "name": "学习用户读设置应 401/403",
+   "pass": true,
+   "detail": "401",
+   "sev": ""
+  },
+  {
+   "id": "E1.1",
+   "name": "super 登录",
+   "pass": true,
+   "detail": "200 ['gk_admin=8ebf4637f7fa2ba484a7fa85d90479d501d183e631636affc786f997532925df; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Strict']",
+   "sev": ""
+  },
+  {
+   "id": "E1.2",
+   "name": "operator 登录",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "E1.3",
+   "name": "admin 错误密码 4xx",
+   "pass": true,
+   "detail": "401 {'error': '账号或密码错误'}",
+   "sev": ""
+  },
+  {
+   "id": "E2.1",
+   "name": "admin/me 返回身份与角色",
+   "pass": true,
+   "detail": "200 {'role': 'super', 'username': 'qa-admin'}",
+   "sev": ""
+  },
+  {
+   "id": "E3.1",
+   "name": "用户列表",
+   "pass": true,
+   "detail": "200 n=3",
+   "sev": ""
+  },
+  {
+   "id": "E3.2",
+   "name": "用户列表含 qa-u2",
+   "pass": true,
+   "detail": "uid2=3",
+   "sev": ""
+  },
+  {
+   "id": "E3.3",
+   "name": "封禁用户",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "E3.4",
+   "name": "被封禁用户登录应 4xx",
+   "pass": true,
+   "detail": "403 {'error': '账号已封禁，如有疑问请联系管理员'}",
+   "sev": ""
+  },
+  {
+   "id": "E3.5",
+   "name": "解封用户",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "E3.6",
+   "name": "解封后可登录",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "E3.7",
+   "name": "管理员重置用户密码",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "E3.8",
+   "name": "重置后新密码可登录",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "E4.1",
+   "name": "operator 读设置权限(观察点)",
+   "pass": true,
+   "detail": "403",
+   "sev": ""
+  },
+  {
+   "id": "E4.2",
+   "name": "operator 改设置应 403(若设计如此)",
+   "pass": true,
+   "detail": "403",
+   "sev": ""
+  },
+  {
+   "id": "E4.3",
+   "name": "operator 读管理员列表权限(观察点)",
+   "pass": true,
+   "detail": "403",
+   "sev": ""
+  },
+  {
+   "id": "E4.4",
+   "name": "operator 创建管理员应 403(若设计如此)",
+   "pass": true,
+   "detail": "403",
+   "sev": ""
+  },
+  {
+   "id": "E5.1",
+   "name": "super 创建管理员",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "E5.2",
+   "name": "super 删除管理员",
+   "pass": true,
+   "detail": "200 {'ok': True}",
+   "sev": ""
+  },
+  {
+   "id": "E5.3",
+   "name": "删除初始 super 观察点(404=上轮已删)",
+   "pass": true,
+   "detail": "404",
+   "sev": ""
+  },
+  {
+   "id": "E6.1",
+   "name": "super 读设置",
+   "pass": true,
+   "detail": "200 {'secret_mask': '••••••••', 'settings': {'llm.api_key': '••••••••', 'llm.base_url': 'https://token.sensenova.cn/v1', 'llm.concurrency': '6', 'llm.dail",
+   "sev": ""
+  },
+  {
+   "id": "E6.2",
+   "name": "super 改设置",
+   "pass": true,
+   "detail": "200 {'settings': {'llm.api_key': '••••••••', 'llm.base_url': 'https://token.sensenova.cn/v1', 'llm.concurrency': '6', 'llm.d",
+   "sev": ""
+  },
+  {
+   "id": "E6.3",
+   "name": "设置生效读回",
+   "pass": true,
+   "detail": "val=300 raw={'secret_mask': '••••••••', 'settings': {'llm.api_key': '••••••••', 'llm.base_url': 'https://token.sensenova.cn/v1', 'llm.concurrency': '6', 'llm.dail",
+   "sev": ""
+  },
+  {
+   "id": "F3.1",
+   "name": "admin login 伪造 Origin 403",
+   "pass": true,
+   "detail": "403",
+   "sev": ""
+  },
+  {
+   "id": "F4.1",
+   "name": "admin 会话访问用户 API 应 401",
+   "pass": true,
+   "detail": "401",
+   "sev": ""
+  },
+  {
+   "id": "E7.1",
+   "name": "管理操作产生审计日志",
+   "pass": true,
+   "detail": "audit rows=17",
+   "sev": ""
+  },
+  {
+   "id": "G1.1",
+   "name": "畸形 JSON 应 4xx",
+   "pass": true,
+   "detail": "400 {'error': \"请求体解析失败: invalid character 'n' looking for beginning of object key string\"}",
+   "sev": ""
+  },
+  {
+   "id": "G1.2",
+   "name": "超长 email 不 500",
+   "pass": true,
+   "detail": "400 {'error': '请求参数不合法\\n邮箱格式不正确'}",
+   "sev": ""
+  },
+  {
+   "id": "G1.3",
+   "name": "超长中文搜索不 500",
+   "pass": true,
+   "detail": "200 n=0",
+   "sev": ""
+  },
+  {
+   "id": "G1.4",
+   "name": "超大 id 溢出处理",
+   "pass": true,
+   "detail": "404",
+   "sev": ""
+  },
+  {
+   "id": "G1.5",
+   "name": "负数 limit/offset 处理",
+   "pass": true,
+   "detail": "200",
+   "sev": ""
+  },
+  {
+   "id": "G1.6",
+   "name": "超大 limit 处理",
+   "pass": true,
+   "detail": "200 n=2",
+   "sev": ""
+  },
+  {
+   "id": "G2.1",
+   "name": "未登录创建会话 401",
+   "pass": true,
+   "detail": "401",
+   "sev": ""
+  }
+ ]
+}
